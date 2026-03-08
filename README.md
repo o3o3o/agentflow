@@ -99,7 +99,7 @@ Check the local Codex/Claude/Kimi smoke prerequisites without launching a run:
 agentflow doctor
 ```
 
-`agentflow doctor` prints JSON by default so CI and wrapper scripts can parse it directly. Use `agentflow doctor --output summary` when you want a quick human-readable checklist instead.
+`agentflow doctor` now defaults to `summary` when stdout is a terminal, which makes local readiness checks easier to scan. It still defaults to JSON when stdout is redirected or piped so CI and wrapper scripts can parse it directly, and you can always force either mode with `--output summary` or `--output json`.
 Those JSON checks also include per-check `context` when AgentFlow can explain a machine-readable cause, such as the node id and resolved values behind a `launch_env_override` report.
 For the bundled smoke pipeline and custom local Kimi-bootstrapped Codex/Claude/Kimi DAGs, Doctor now also reports when the current shell exports conflicting launch values such as `ANTHROPIC_BASE_URL` that a node will replace at launch, and it carries the same source hint into the human summary and JSON context. Overrides that come directly from explicit pipeline configuration such as `node.env`, `provider.env`, or `provider.base_url` stay informational in Doctor so the preflight does not go yellow for an intentional mixed-provider setup.
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import json
+import sys
 from dataclasses import replace
 from datetime import datetime
 from enum import StrEnum
@@ -36,6 +37,7 @@ app = typer.Typer(add_completion=False)
 
 
 class StructuredOutputFormat(StrEnum):
+    AUTO = "auto"
     JSON = "json"
     SUMMARY = "summary"
 
@@ -449,6 +451,20 @@ def _structured_output_from_run_output(output: RunOutputFormat) -> StructuredOut
     return StructuredOutputFormat.JSON
 
 
+def _stream_supports_tty_summary(*, err: bool) -> bool:
+    stream = sys.stderr if err else sys.stdout
+    isatty = getattr(stream, "isatty", None)
+    return bool(callable(isatty) and isatty())
+
+
+def _resolve_structured_output(output: StructuredOutputFormat, *, err: bool) -> StructuredOutputFormat:
+    if output != StructuredOutputFormat.AUTO:
+        return output
+    if _stream_supports_tty_summary(err=err):
+        return StructuredOutputFormat.SUMMARY
+    return StructuredOutputFormat.JSON
+
+
 def _node_uses_kimi_smoke_bootstrap(node: object) -> bool:
     return _node_kimi_smoke_preflight_match(node) is not None
 
@@ -833,7 +849,8 @@ def _echo_doctor_report(
     shell_bridge: object | None = None,
     pipeline: dict[str, object] | None = None,
 ) -> None:
-    if output == StructuredOutputFormat.SUMMARY:
+    resolved_output = _resolve_structured_output(output, err=err)
+    if resolved_output == StructuredOutputFormat.SUMMARY:
         typer.echo(
             _render_doctor_summary(
                 report,
@@ -968,7 +985,11 @@ def doctor(
         None,
         help="Optional pipeline path. Adds pipeline-specific local shell bootstrap warnings to the doctor report.",
     ),
-    output: StructuredOutputFormat = typer.Option(StructuredOutputFormat.JSON, "--output", help="Result output format."),
+    output: StructuredOutputFormat = typer.Option(
+        StructuredOutputFormat.AUTO,
+        "--output",
+        help="Result output format. Defaults to `summary` on a terminal and `json` otherwise.",
+    ),
     shell_bridge: bool = typer.Option(
         False,
         "--shell-bridge",

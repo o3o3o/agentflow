@@ -3387,6 +3387,7 @@ def test_doctor_outputs_json_report(monkeypatch):
 def test_doctor_defaults_to_json_report(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
     monkeypatch.setattr(agentflow.cli, "build_local_smoke_doctor_report", lambda: _doctor_report())
+    monkeypatch.setattr(agentflow.cli, "_stream_supports_tty_summary", lambda *, err: False)
 
     result = runner.invoke(app, ["doctor"])
 
@@ -3395,6 +3396,17 @@ def test_doctor_defaults_to_json_report(monkeypatch):
         "status": "ok",
         "checks": [{"name": "kimi_shell_helper", "status": "ok", "detail": "ready"}],
     }
+
+
+def test_doctor_defaults_to_summary_report_on_tty(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
+    monkeypatch.setattr(agentflow.cli, "build_local_smoke_doctor_report", lambda: _doctor_report())
+    monkeypatch.setattr(agentflow.cli, "_stream_supports_tty_summary", lambda *, err: True)
+
+    result = runner.invoke(app, ["doctor"])
+
+    assert result.exit_code == 0
+    assert result.stdout == "Doctor: ok\n- kimi_shell_helper: ok - ready\n"
 
 
 def test_doctor_supports_summary_output(monkeypatch):
