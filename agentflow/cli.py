@@ -362,14 +362,30 @@ def _pipeline_launch_env_override_checks(pipeline: object) -> list[DoctorCheck]:
     checks: list[DoctorCheck] = []
     for node in report.get("nodes", []):
         node_id = str(node.get("id") or "node")
-        for warning in node.get("warnings", []) or []:
-            if not isinstance(warning, str) or not warning.startswith("Launch env overrides current `"):
+        for override in node.get("launch_env_overrides", []) or []:
+            if not isinstance(override, dict):
                 continue
+            key = str(override.get("key") or "")
+            if not key:
+                continue
+
+            detail = f"Node `{node_id}`: Launch env overrides current `{key}` for this node."
+            if not override.get("redacted"):
+                current_value = override.get("current_value")
+                launch_value = override.get("launch_value")
+                if isinstance(current_value, str) and isinstance(launch_value, str):
+                    detail = (
+                        f"Node `{node_id}`: Launch env overrides current `{key}` from `{current_value}` "
+                        f"to `{launch_value}`."
+                    )
+
+            context = {"node_id": node_id, **override}
             checks.append(
                 DoctorCheck(
                     name="launch_env_override",
                     status="warning",
-                    detail=f"Node `{node_id}`: {warning}",
+                    detail=detail,
+                    context=context,
                 )
             )
     return checks

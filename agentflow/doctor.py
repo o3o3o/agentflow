@@ -212,6 +212,17 @@ class DoctorCheck:
     name: str
     status: str
     detail: str
+    context: dict[str, Any] | None = None
+
+    def as_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "name": self.name,
+            "status": self.status,
+            "detail": self.detail,
+        }
+        if self.context is not None:
+            payload["context"] = dict(self.context)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -222,7 +233,7 @@ class DoctorReport:
     def as_dict(self) -> dict[str, object]:
         return {
             "status": self.status,
-            "checks": [asdict(check) for check in self.checks],
+            "checks": [check.as_dict() for check in self.checks],
         }
 
 

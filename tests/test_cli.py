@@ -3680,6 +3680,49 @@ nodes:
     )
 
 
+def test_doctor_with_pipeline_path_json_includes_launch_env_override_context(tmp_path, monkeypatch):
+    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path.write_text(
+        """name: doctor-base-url-override-json
+working_dir: .
+nodes:
+  - id: review
+    agent: claude
+    provider: kimi
+    prompt: hi
+    target:
+      kind: local
+      shell: bash
+      shell_login: true
+      shell_interactive: true
+      shell_init: kimi
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(agentflow.cli, "build_local_smoke_doctor_report", lambda: _doctor_report())
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "super-secret")
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://open.bigmodel.cn/api/anthropic")
+
+    result = runner.invoke(app, ["doctor", str(pipeline_path), "--output", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["checks"] == [
+        {"name": "kimi_shell_helper", "status": "ok", "detail": "ready"},
+        {
+            "name": "launch_env_override",
+            "status": "warning",
+            "detail": "Node `review`: Launch env overrides current `ANTHROPIC_BASE_URL` from `https://open.bigmodel.cn/api/anthropic` to `https://api.kimi.com/coding/`.",
+            "context": {
+                "node_id": "review",
+                "key": "ANTHROPIC_BASE_URL",
+                "current_value": "https://open.bigmodel.cn/api/anthropic",
+                "launch_value": "https://api.kimi.com/coding/",
+            },
+        },
+    ]
+
+
 def test_doctor_without_path_warns_when_bundled_smoke_overrides_current_base_url(tmp_path, monkeypatch):
     pipeline_path = tmp_path / "bundled-smoke.yaml"
     pipeline_path.write_text(
