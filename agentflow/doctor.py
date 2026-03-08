@@ -10,6 +10,7 @@ from pathlib import Path
 
 
 _BASH_LOGIN_FILENAMES = (".bash_profile", ".bash_login", ".profile")
+_CODEX_IN_SHELL_MISSING_EXIT_CODE = 10
 _KIMI_HELPER_MISSING_EXIT_CODE = 11
 _CLAUDE_IN_SHELL_MISSING_EXIT_CODE = 12
 _KIMI_API_KEY_MISSING_EXIT_CODE = 13
@@ -72,6 +73,52 @@ def _check_executable(name: str) -> DoctorCheck:
     if path:
         return DoctorCheck(name=name, status="ok", detail=f"Found `{name}` at `{path}`.")
     return DoctorCheck(name=name, status="failed", detail=f"`{name}` is not on PATH.")
+
+
+def _check_codex_executable(home: Path | None = None) -> DoctorCheck:
+    path = shutil.which("codex")
+    if path:
+        return DoctorCheck(name="codex", status="ok", detail=f"Found `codex` at `{path}`.")
+
+    env = os.environ.copy()
+    if home is not None:
+        env["HOME"] = str(home)
+    try:
+        result = subprocess.run(
+            ["bash", "-lic", f"type {shlex.quote('codex')} >/dev/null 2>&1 || exit {_CODEX_IN_SHELL_MISSING_EXIT_CODE}"],
+            check=False,
+            capture_output=True,
+            env=env,
+            text=True,
+        )
+    except OSError as exc:
+        return DoctorCheck(
+            name="codex",
+            status="failed",
+            detail=f"`codex` is not on PATH, and AgentFlow could not launch `bash -lic` to look for it: {exc}",
+        )
+
+    if result.returncode == 0:
+        return DoctorCheck(
+            name="codex",
+            status="warning",
+            detail=(
+                "`codex` is not on PATH outside the bundled smoke login shell; "
+                "`bash -lic` must provide it for the local smoke pipeline."
+            ),
+        )
+    if result.returncode == _CODEX_IN_SHELL_MISSING_EXIT_CODE:
+        return DoctorCheck(
+            name="codex",
+            status="failed",
+            detail="`codex` is not on PATH and is unavailable in `bash -lic`.",
+        )
+    detail = result.stderr.strip() or f"exit status {result.returncode}"
+    return DoctorCheck(
+        name="codex",
+        status="failed",
+        detail=f"`codex` is not on PATH, and `bash -lic` failed while looking for it: {detail}",
+    )
 
 
 def _check_claude_host_executable() -> DoctorCheck:
@@ -249,7 +296,7 @@ def _check_kimi_shell_helper(home: Path | None = None) -> DoctorCheck:
 def build_local_smoke_doctor_report(home: Path | None = None) -> DoctorReport:
     resolved_home = home or Path.home()
     checks = [
-        _check_executable("codex"),
+        _check_codex_executable(resolved_home),
         _check_claude_host_executable(),
         _check_bash_login_startup(resolved_home),
         _check_kimi_shell_helper(resolved_home),

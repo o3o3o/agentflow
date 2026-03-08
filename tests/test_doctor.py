@@ -257,6 +257,33 @@ def test_local_smoke_doctor_report_warns_when_claude_is_only_available_in_bash_s
     }
 
 
+def test_local_smoke_doctor_report_warns_when_codex_is_only_available_in_bash_shell(tmp_path: Path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".profile").write_text('if [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi\n', encoding="utf-8")
+    (home / ".bashrc").write_text("kimi(){ :; }\n", encoding="utf-8")
+
+    def fake_which(name: str) -> str | None:
+        if name == "claude":
+            return "/tmp/claude"
+        return None
+
+    monkeypatch.setattr("agentflow.doctor.shutil.which", fake_which)
+    monkeypatch.setattr(
+        "agentflow.doctor.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args=args[0], returncode=0, stdout="", stderr=""),
+    )
+
+    report = build_local_smoke_doctor_report(home=home)
+
+    assert report.status == "warning"
+    assert report.as_dict()["checks"][0] == {
+        "name": "codex",
+        "status": "warning",
+        "detail": "`codex` is not on PATH outside the bundled smoke login shell; `bash -lic` must provide it for the local smoke pipeline.",
+    }
+
+
 def test_local_smoke_doctor_report_fails_when_kimi_helper_does_not_export_api_key(tmp_path: Path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()
