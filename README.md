@@ -90,7 +90,7 @@ Run the same bundled local flow as a single readiness + execution check:
 agentflow check-local
 ```
 
-The bundled smoke now launches both `codex` and `claude` in parallel inside `bash -lic` so the default check covers scheduler fan-out as well as login-shell startup files for local CLI installs. Both nodes also run `kimi` first, which keeps the default smoke aligned with shared Kimi bootstrap setups where the same shell helper prepares both CLIs.
+The bundled smoke now launches both `codex` and `claude` in parallel inside `bash -lic` so the default check covers scheduler fan-out as well as login-shell startup files for local CLI installs. The example also uses pipeline-level `local_target_defaults` to run `kimi` first for every local node, which keeps the default smoke aligned with shared Kimi bootstrap setups where the same shell helper prepares both CLIs without repeating the same target block on every node.
 
 `agentflow check-local` prints the Doctor report to stderr first and then launches the bundled smoke pipeline only when the local setup is ready enough to continue. The repo-local `make check-local` shortcut now calls that same single-pass CLI flow, so you do not pay for the Doctor preflight twice before the smoke run starts. `check-local` also accepts an optional custom pipeline path when you want the same doctor-then-run flow for another local Kimi-backed smoke DAG, and it now reuses that same validated pipeline snapshot for the launch step instead of reloading the file after Doctor succeeds. When that custom path does not match the bundled smoke example and does not bootstrap local nodes through `kimi`, the Doctor step now skips the bundled smoke-only Kimi helper checks and sticks to the local agent checks that pipeline actually needs. When you pass `--output json` or `--output json-summary`, that preflight stderr payload is JSON so wrappers can parse readiness and run output separately.
 
@@ -238,7 +238,33 @@ target:
     - kimi
 ```
 
-This runs the node inside `bash`, explicitly enables login and interactive startup files, verifies `kimi` is available, executes it, and then launches the prepared agent command. `shell_init` accepts either a single command or a list of commands; list entries are joined with `&&` so bootstrap failures still stop the wrapped agent launch. It is useful for helper functions defined in `~/.bashrc` without forcing you to hand-write quoted shell templates. If you prefer to spell the wrapper directly, explicit shells such as `bash -lic` behave the same way, and AgentFlow suppresses Bash's harmless no-job-control stderr noise for those interactive wrappers too. If your login shell uses `~/.bash_profile`, make sure it eventually reaches `~/.bashrc`, either directly or via another startup file such as `~/.profile`; otherwise Bash only reads `~/.profile` when no `~/.bash_profile` or `~/.bash_login` file is present. A minimal bridge looks like:
+This runs the node inside `bash`, explicitly enables login and interactive startup files, verifies `kimi` is available, executes it, and then launches the prepared agent command. `shell_init` accepts either a single command or a list of commands; list entries are joined with `&&` so bootstrap failures still stop the wrapped agent launch. It is useful for helper functions defined in `~/.bashrc` without forcing you to hand-write quoted shell templates.
+
+When most local nodes share the same shell bootstrap, move that block to top-level `local_target_defaults` and only override the nodes that differ:
+
+```yaml
+local_target_defaults:
+  shell: bash
+  shell_login: true
+  shell_interactive: true
+  shell_init:
+    - command -v kimi >/dev/null 2>&1
+    - kimi
+
+nodes:
+  - id: codex_plan
+    agent: codex
+    prompt: Reply with exactly: codex ok
+
+  - id: claude_review
+    agent: claude
+    provider: kimi
+    prompt: Reply with exactly: claude ok
+    target:
+      cwd: review
+```
+
+AgentFlow applies `local_target_defaults` to local nodes that omit `target`, merges it into local nodes that only override part of `target`, and leaves container or Lambda targets unchanged. If you prefer to spell the wrapper directly, explicit shells such as `bash -lic` behave the same way, and AgentFlow suppresses Bash's harmless no-job-control stderr noise for those interactive wrappers too. If your login shell uses `~/.bash_profile`, make sure it eventually reaches `~/.bashrc`, either directly or via another startup file such as `~/.profile`; otherwise Bash only reads `~/.profile` when no `~/.bash_profile` or `~/.bash_login` file is present. A minimal bridge looks like:
 
 ```bash
 # ~/.bash_profile or ~/.profile

@@ -2,17 +2,16 @@ name: local-real-agents-kimi-smoke
 description: Minimal parallel real-agent smoke test for local Codex plus Claude-on-Kimi.
 working_dir: .
 concurrency: 2
+local_target_defaults:
+  shell: bash
+  shell_login: true
+  shell_interactive: true
+  shell_init:
+    - command -v kimi >/dev/null 2>&1
+    - kimi
 nodes:
   - id: codex_plan
     agent: codex
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-      shell_interactive: true
-      shell_init:
-        - command -v kimi >/dev/null 2>&1
-        - kimi
     prompt: |
       Reply with exactly: codex ok
     timeout_seconds: 180
@@ -23,14 +22,6 @@ nodes:
   - id: claude_review
     agent: claude
     provider: kimi
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-      shell_interactive: true
-      shell_init:
-        - command -v kimi >/dev/null 2>&1
-        - kimi
     prompt: |
       Reply with exactly: claude ok
     timeout_seconds: 180
