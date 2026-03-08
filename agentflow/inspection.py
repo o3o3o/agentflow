@@ -329,15 +329,37 @@ def _launch_env_override_warning(key: str, current_value: str, launch_value: str
     return None
 
 
-def _launch_env_override_warnings(launch_env: dict[str, str]) -> list[str]:
-    warnings: list[str] = []
+def _launch_env_override_details(launch_env: dict[str, str]) -> list[dict[str, Any]]:
+    details: list[dict[str, Any]] = []
     for key, launch_value in sorted(launch_env.items()):
         current_value = os.getenv(key)
         if current_value is None:
             continue
+
         warning = _launch_env_override_warning(key, str(current_value), str(launch_value))
-        if warning is not None:
-            warnings.append(warning)
+        if warning is None:
+            continue
+
+        detail: dict[str, Any] = {"key": key}
+        if key.endswith("_BASE_URL"):
+            detail["current_value"] = str(current_value)
+            detail["launch_value"] = str(launch_value)
+        else:
+            detail["redacted"] = True
+        details.append(detail)
+    return details
+
+
+def _launch_env_override_warnings(launch_env: dict[str, str]) -> list[str]:
+    warnings: list[str] = []
+    for detail in _launch_env_override_details(launch_env):
+        key = str(detail["key"])
+        if detail.get("redacted"):
+            warnings.append(f"Launch env overrides current `{key}` for this node.")
+            continue
+        warnings.append(
+            f"Launch env overrides current `{key}` from `{detail['current_value']}` to `{detail['launch_value']}`."
+        )
     return warnings
 
 
@@ -440,6 +462,9 @@ def build_launch_inspection(
         auth_summary = _auth_summary(node, resolved_provider)
         if auth_summary:
             node_plan["auth"] = auth_summary
+        launch_env_overrides = _launch_env_override_details(prepared.env)
+        if launch_env_overrides:
+            node_plan["launch_env_overrides"] = launch_env_overrides
         node_plan["warnings"] = _target_warnings(node_plan["target"]) + _launch_env_override_warnings(prepared.env)
         node_plan["launch"]["payload_summary"] = _payload_summary(node_plan)
         inspected_nodes.append(node_plan)
@@ -542,6 +567,9 @@ def build_launch_inspection_summary(report: dict[str, Any]) -> dict[str, Any]:
         warnings = node.get("warnings")
         if warnings:
             node_summary["warnings"] = list(warnings)
+        launch_env_overrides = node.get("launch_env_overrides")
+        if launch_env_overrides:
+            node_summary["launch_env_overrides"] = list(launch_env_overrides)
         summary["nodes"].append(node_summary)
 
     return summary

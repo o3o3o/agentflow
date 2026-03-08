@@ -390,9 +390,40 @@ nodes:
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
+    assert payload["nodes"][0]["launch_env_overrides"] == [
+        {
+            "key": "ANTHROPIC_BASE_URL",
+            "current_value": "https://open.bigmodel.cn/api/anthropic",
+            "launch_value": "https://api.kimi.com/coding/",
+        }
+    ]
     assert payload["nodes"][0]["warnings"] == [
         "Launch env overrides current `ANTHROPIC_BASE_URL` from `https://open.bigmodel.cn/api/anthropic` to `https://api.kimi.com/coding/`."
     ]
+
+
+def test_inspect_command_summary_redacts_sensitive_launch_env_override_details(tmp_path, monkeypatch):
+    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path.write_text(
+        """name: inspect-secret-override
+working_dir: .
+nodes:
+  - id: plan
+    agent: codex
+    prompt: hi
+    env:
+      OPENAI_API_KEY: node-secret
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "current-secret")
+
+    result = runner.invoke(app, ["inspect", str(pipeline_path), "--output", "json-summary"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["nodes"][0]["launch_env_overrides"] == [{"key": "OPENAI_API_KEY", "redacted": True}]
+    assert payload["nodes"][0]["warnings"] == ["Launch env overrides current `OPENAI_API_KEY` for this node."]
 
 
 def test_inspect_command_redacts_inline_shell_bootstrap_secrets(tmp_path, monkeypatch):
