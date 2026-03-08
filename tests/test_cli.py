@@ -183,6 +183,51 @@ nodes:
     assert payload["nodes"][0]["launch"]["env"]["ANTHROPIC_BASE_URL"] == "https://api.kimi.com/coding/"
 
 
+def test_inspect_command_supports_json_summary_output(tmp_path, monkeypatch):
+    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path.write_text(
+        """name: inspect-json-summary
+working_dir: .
+nodes:
+  - id: review
+    agent: claude
+    provider: kimi
+    prompt: "Reply with exactly: claude ok"
+    target:
+      kind: local
+      shell: bash
+      shell_login: true
+      shell_interactive: true
+      shell_init: kimi
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "super-secret")
+
+    result = runner.invoke(app, ["inspect", str(pipeline_path), "--node", "review", "--output", "json-summary"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["pipeline"] == {
+        "name": "inspect-json-summary",
+        "working_dir": str(tmp_path.resolve()),
+        "node_count": 1,
+    }
+    assert payload["nodes"] == [
+        {
+            "id": "review",
+            "agent": "claude",
+            "target": "local",
+            "provider": "kimi, key=ANTHROPIC_API_KEY, url=https://api.kimi.com/coding/",
+            "prompt_preview": "Reply with exactly: claude ok",
+            "prepared_command": "claude -p 'Reply with exactly: claude ok' --output-format stream-json --verbose --permission-mode bypassPermissions --tools Read,Glob,Grep,LS,NotebookRead,Task,TaskOutput,TodoRead,WebFetch,WebSearch",
+            "launch": "bash -l -i -c 'kimi && eval \"$AGENTFLOW_TARGET_COMMAND\"'",
+            "cwd": str(tmp_path.resolve()),
+            "env_keys": ["AGENTFLOW_TARGET_COMMAND", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"],
+        }
+    ]
+
+
 def test_inspect_command_redacts_auth_and_header_style_env_keys(tmp_path, monkeypatch):
     pipeline_path = tmp_path / "pipeline.yaml"
     pipeline_path.write_text(

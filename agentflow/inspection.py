@@ -213,6 +213,64 @@ def build_launch_inspection(
     }
 
 
+def build_launch_inspection_summary(report: dict[str, Any]) -> dict[str, Any]:
+    pipeline = {
+        key: value
+        for key, value in (report.get("pipeline") or {}).items()
+        if value is not None
+    }
+    summary: dict[str, Any] = {
+        "pipeline": pipeline,
+        "nodes": [],
+    }
+
+    notes = report.get("notes")
+    if notes:
+        summary["notes"] = list(notes)
+
+    for node in report.get("nodes", []):
+        node_summary: dict[str, Any] = {
+            "id": node["id"],
+            "agent": node["agent"],
+            "target": node["target"]["kind"],
+        }
+        depends_on = node.get("depends_on")
+        if depends_on:
+            node_summary["depends_on"] = list(depends_on)
+        render_error = node.get("render_error")
+        if render_error:
+            node_summary["render_error"] = render_error
+        model = node.get("model")
+        if model:
+            node_summary["model"] = model
+        provider_summary = _provider_summary(node)
+        if provider_summary:
+            node_summary["provider"] = provider_summary
+        prompt_preview = node.get("rendered_prompt_preview")
+        if prompt_preview:
+            node_summary["prompt_preview"] = prompt_preview
+        prepared_command = node.get("prepared", {}).get("command_text")
+        if prepared_command:
+            node_summary["prepared_command"] = prepared_command
+        launch_command = node.get("launch", {}).get("command_text")
+        node_summary["launch"] = launch_command or node["launch"]["kind"]
+        cwd = node.get("launch", {}).get("cwd") or node.get("prepared", {}).get("cwd")
+        if cwd:
+            node_summary["cwd"] = cwd
+        env_keys = node.get("launch", {}).get("env_keys") or node.get("prepared", {}).get("env_keys")
+        if env_keys:
+            node_summary["env_keys"] = list(env_keys)
+        runtime_files = node.get("launch", {}).get("runtime_files") or node.get("prepared", {}).get("runtime_files")
+        if runtime_files:
+            node_summary["runtime_files"] = list(runtime_files)
+        payload_summary = node.get("launch", {}).get("payload_summary")
+        if payload_summary:
+            node_summary["payload"] = payload_summary
+        summary["nodes"].append(node_summary)
+
+    return summary
+
+
 def render_launch_inspection_summary(report: dict[str, Any]) -> str:
     pipeline = report["pipeline"]
     lines = [f"Pipeline: {pipeline['name']}", f"Working dir: {pipeline['working_dir']}"]
