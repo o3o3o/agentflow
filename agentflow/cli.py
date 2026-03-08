@@ -18,6 +18,12 @@ class RunOutputFormat(StrEnum):
     SUMMARY = "summary"
 
 
+class SmokePreflightMode(StrEnum):
+    AUTO = "auto"
+    ALWAYS = "always"
+    NEVER = "never"
+
+
 def _build_runtime(runs_dir: str, max_concurrent_runs: int) -> tuple[object, object]:
     from agentflow.orchestrator import Orchestrator
     from agentflow.store import RunStore
@@ -157,6 +163,16 @@ def _doctor_report():
     return build_local_smoke_doctor_report()
 
 
+def _should_run_smoke_preflight(path: str | None, preflight: SmokePreflightMode) -> bool:
+    if preflight == SmokePreflightMode.ALWAYS:
+        return True
+    if preflight == SmokePreflightMode.NEVER:
+        return False
+    if path is None:
+        return True
+    return Path(path).expanduser().resolve() == Path(default_smoke_pipeline_path()).expanduser().resolve()
+
+
 def _render_doctor_summary(report: object) -> str:
     lines = [f"Doctor: {_status_value(getattr(report, 'status', 'unknown'))}"]
     for check in getattr(report, "checks", []) or []:
@@ -233,8 +249,13 @@ def smoke(
     runs_dir: str = typer.Option(".agentflow/runs", envvar="AGENTFLOW_RUNS_DIR"),
     max_concurrent_runs: int = typer.Option(2, envvar="AGENTFLOW_MAX_CONCURRENT_RUNS"),
     output: RunOutputFormat = typer.Option(RunOutputFormat.SUMMARY, "--output", help="Result output format."),
+    preflight: SmokePreflightMode = typer.Option(
+        SmokePreflightMode.AUTO,
+        "--preflight",
+        help="When to run the bundled local smoke preflight.",
+    ),
 ) -> None:
-    if path is None:
+    if _should_run_smoke_preflight(path, preflight):
         report = _doctor_report()
         if report.status == "failed":
             _echo_doctor_report(report, output=output)
