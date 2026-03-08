@@ -1217,6 +1217,54 @@ nodes:
     ]
 
 
+def test_inspect_command_resolves_default_kimi_provider_in_json(tmp_path):
+    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path.write_text(
+        """name: inspect-kimi-default-provider
+working_dir: .
+nodes:
+  - id: review
+    agent: kimi
+    prompt: hi
+""",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["inspect", str(pipeline_path), "--output", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["nodes"][0]["provider"] is None
+    assert payload["nodes"][0]["resolved_provider"] == {
+        "name": "moonshot",
+        "base_url": "https://api.moonshot.ai/v1",
+        "api_key_env": "KIMI_API_KEY",
+        "wire_api": None,
+        "headers": {},
+        "env": {},
+    }
+
+
+def test_inspect_command_surfaces_default_kimi_provider_in_json_summary(tmp_path):
+    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path.write_text(
+        """name: inspect-kimi-default-provider-summary
+working_dir: .
+nodes:
+  - id: review
+    agent: kimi
+    prompt: hi
+""",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["inspect", str(pipeline_path), "--output", "json-summary"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["nodes"][0]["provider"] == "moonshot, key=KIMI_API_KEY, url=https://api.moonshot.ai/v1"
+
+
 @pytest.mark.parametrize(
     "command",
     [
