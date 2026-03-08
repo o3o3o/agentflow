@@ -294,6 +294,7 @@ The frontend shows:
 
 Artifact files are persisted under `AGENTFLOW_RUNS_DIR/<run_id>/artifacts/<node_id>/`.
 Each node now includes a redacted `launch.json` artifact that records the resolved command, working directory, selected runtime files, and any remote-runner payload metadata without storing secret env values, inline shell bootstrap assignments, or runtime file contents.
+For structured agent streams such as Codex and Claude JSON output, `stdout.log` keeps the full raw stream while `result.json` and downstream node context omit parser-ignored control chatter such as startup hooks and suppressed warnings.
 
 ## API surface
 
