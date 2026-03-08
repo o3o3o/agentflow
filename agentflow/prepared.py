@@ -45,7 +45,8 @@ def build_execution_paths(
     node_target: Any,
     create_runtime_dir: bool = True,
 ) -> ExecutionPaths:
-    host_runtime_dir = base_dir / run_id / "runtime" / node_id
+    resolved_base_dir = base_dir.expanduser().resolve()
+    host_runtime_dir = resolved_base_dir / run_id / "runtime" / node_id
     if create_runtime_dir:
         host_runtime_dir = ensure_dir(host_runtime_dir)
 
