@@ -10,6 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 import agentflow.cli
+import agentflow.local_shell
 from agentflow.cli import app
 from agentflow.doctor import DoctorCheck, DoctorReport, ShellBridgeRecommendation
 from agentflow.specs import ProviderConfig
@@ -1019,6 +1020,71 @@ nodes:
     }
     assert payload["nodes"][0]["warnings"] == [
         "`target.shell` uses `kimi` with bash without interactive startup; helpers from `~/.bashrc` are usually unavailable. Add `-i`, set `target.shell_interactive: true`, or use `bash -lic`."
+    ]
+
+
+def test_inspect_command_detects_env_var_eval_kimi_wrapper_in_auto_preflight(tmp_path):
+    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path.write_text(
+        """name: inspect-kimi-env-eval-wrapper
+working_dir: .
+nodes:
+  - id: review
+    agent: claude
+    prompt: hi
+    target:
+      kind: local
+      shell: "bash -lc 'KIMI_ENV=\"$(kimi)\" && eval \"$KIMI_ENV\" && {command}'"
+""",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["inspect", str(pipeline_path), "--output", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["pipeline"]["auto_preflight"] == {
+        "enabled": True,
+        "reason": "local Codex/Claude/Kimi nodes use a `kimi` shell bootstrap.",
+        "matches": [{"node_id": "review", "agent": "claude", "trigger": "target.shell"}],
+        "match_summary": ["review (claude) via `target.shell`"],
+    }
+    assert payload["nodes"][0]["warnings"] == [
+        "`target.shell` uses `kimi` with bash without interactive startup; helpers from `~/.bashrc` are usually unavailable. Add `-i`, set `target.shell_interactive: true`, or use `bash -lic`."
+    ]
+
+
+def test_inspect_command_warns_when_bash_env_points_to_guarded_home_bashrc(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".bashrc").write_text(
+        "case $- in\n    *i*) ;;\n      *) return;;\nesac\n\nkimi(){ :; }\n",
+        encoding="utf-8",
+    )
+    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path.write_text(
+        """name: inspect-kimi-bashenv-bashrc-guard
+working_dir: .
+nodes:
+  - id: review
+    agent: claude
+    prompt: hi
+    target:
+      kind: local
+      shell: "env BASH_ENV=$HOME/.bashrc bash -c"
+      shell_init: kimi
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(agentflow.local_shell.Path, "home", classmethod(lambda cls: home))
+
+    result = runner.invoke(app, ["inspect", str(pipeline_path), "--output", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["nodes"][0]["warnings"] == [
+        "`shell_init: kimi` uses bash without interactive startup; helpers from `~/.bashrc` are usually unavailable. Set `target.shell_interactive: true` or use `bash -lic`."
     ]
 
 
