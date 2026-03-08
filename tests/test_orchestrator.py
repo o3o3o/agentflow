@@ -62,7 +62,12 @@ class LaunchPlanAdapter(AgentAdapter):
     def prepare(self, node, prompt: str, paths: ExecutionPaths) -> PreparedExecution:
         return PreparedExecution(
             command=["python3", "-c", 'print("launch plan ok")'],
-            env={"OPENAI_API_KEY": "super-secret", "VISIBLE_FLAG": "visible"},
+            env={
+                "OPENAI_API_KEY": "super-secret",
+                "UPSTREAM_AUTH_HEADER": "Bearer top-secret",
+                "ANTHROPIC_CUSTOM_HEADERS": '{"x-api-key": "super-secret"}',
+                "VISIBLE_FLAG": "visible",
+            },
             cwd=paths.target_workdir,
             trace_kind=node.agent.value,
             runtime_files={"config/runtime.env": "OPENAI_API_KEY=super-secret\n"},
@@ -335,7 +340,9 @@ async def test_orchestrator_writes_redacted_launch_artifact(tmp_path: Path):
         "kind": "process",
         "command": ["bash", "-c", "python3 -c 'print(\"launch plan ok\")'"],
         "env": {
+            "ANTHROPIC_CUSTOM_HEADERS": "<redacted>",
             "OPENAI_API_KEY": "<redacted>",
+            "UPSTREAM_AUTH_HEADER": "<redacted>",
             "VISIBLE_FLAG": "visible",
         },
         "cwd": str(tmp_path),

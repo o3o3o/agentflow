@@ -183,6 +183,38 @@ nodes:
     assert payload["nodes"][0]["launch"]["env"]["ANTHROPIC_BASE_URL"] == "https://api.kimi.com/coding/"
 
 
+def test_inspect_command_redacts_auth_and_header_style_env_keys(tmp_path, monkeypatch):
+    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path.write_text(
+        """name: inspect-redaction
+working_dir: .
+nodes:
+  - id: review
+    agent: claude
+    prompt: hi
+    provider:
+      name: kimi
+      base_url: https://api.kimi.com/coding/
+      api_key_env: ANTHROPIC_API_KEY
+      env:
+        UPSTREAM_AUTH_HEADER: Bearer top-secret
+      headers:
+        Authorization: Bearer top-secret
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "super-secret")
+
+    result = runner.invoke(app, ["inspect", str(pipeline_path), "--node", "review", "--output", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    env = payload["nodes"][0]["launch"]["env"]
+    assert env["ANTHROPIC_API_KEY"] == "<redacted>"
+    assert env["ANTHROPIC_CUSTOM_HEADERS"] == "<redacted>"
+    assert env["UPSTREAM_AUTH_HEADER"] == "<redacted>"
+
+
 def test_inspect_command_summary_shows_resolved_provider(tmp_path):
     pipeline_path = tmp_path / "pipeline.yaml"
     pipeline_path.write_text(
