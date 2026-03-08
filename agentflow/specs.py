@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
@@ -107,6 +108,32 @@ class MCPServerSpec(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
     url: str | None = None
     headers: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_transport_fields(self) -> "MCPServerSpec":
+        if self.transport == "stdio":
+            if not self.command or not self.command.strip():
+                raise ValueError("stdio MCP servers require `command`")
+            unsupported_fields = []
+            if self.url and self.url.strip():
+                unsupported_fields.append("url")
+            if self.headers:
+                unsupported_fields.append("headers")
+        else:
+            if not self.url or not self.url.strip():
+                raise ValueError("streamable_http MCP servers require `url`")
+            unsupported_fields = []
+            if self.command and self.command.strip():
+                unsupported_fields.append("command")
+            if self.args:
+                unsupported_fields.append("args")
+            if self.env:
+                unsupported_fields.append("env")
+
+        if unsupported_fields:
+            joined = ", ".join(f"`{field}`" for field in unsupported_fields)
+            raise ValueError(f"{self.transport} MCP servers do not support {joined}")
+        return self
 
 
 class LocalTarget(BaseModel):
@@ -220,6 +247,9 @@ class NodeSpec(BaseModel):
     @model_validator(mode="after")
     def ensure_unique_dependencies(self) -> "NodeSpec":
         self.depends_on = list(dict.fromkeys(self.depends_on))
+        duplicate_mcp_names = sorted(name for name, count in Counter(mcp.name for mcp in self.mcps).items() if count > 1)
+        if duplicate_mcp_names:
+            raise ValueError(f"duplicate MCP server names on node {self.id!r}: {duplicate_mcp_names}")
         resolve_provider(self.provider, self.agent)
         return self
 

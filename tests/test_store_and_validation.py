@@ -63,6 +63,60 @@ def test_pipeline_validation_rejects_local_shell_bootstrap_without_shell(target_
 
 
 @pytest.mark.parametrize(
+    ("mcp_patch", "expected_message"),
+    [
+        ({"transport": "stdio"}, "stdio MCP servers require `command`"),
+        (
+            {"transport": "stdio", "command": "npx", "url": "https://example.com/mcp"},
+            "stdio MCP servers do not support `url`",
+        ),
+        ({"transport": "streamable_http"}, "streamable_http MCP servers require `url`"),
+        (
+            {"transport": "streamable_http", "url": "https://example.com/mcp", "command": "npx"},
+            "streamable_http MCP servers do not support `command`",
+        ),
+    ],
+)
+def test_pipeline_validation_rejects_invalid_mcp_server_shape(mcp_patch, expected_message):
+    with pytest.raises(ValueError, match=expected_message):
+        PipelineSpec.model_validate(
+            {
+                "name": "invalid-mcp-shape",
+                "working_dir": ".",
+                "nodes": [
+                    {
+                        "id": "plan",
+                        "agent": "claude",
+                        "prompt": "plan",
+                        "mcps": [{"name": "github", **mcp_patch}],
+                    },
+                ],
+            }
+        )
+
+
+def test_pipeline_validation_rejects_duplicate_mcp_server_names():
+    with pytest.raises(ValueError, match="duplicate MCP server names"):
+        PipelineSpec.model_validate(
+            {
+                "name": "duplicate-mcps",
+                "working_dir": ".",
+                "nodes": [
+                    {
+                        "id": "plan",
+                        "agent": "claude",
+                        "prompt": "plan",
+                        "mcps": [
+                            {"name": "github", "command": "npx"},
+                            {"name": "github", "command": "node"},
+                        ],
+                    },
+                ],
+            }
+        )
+
+
+@pytest.mark.parametrize(
     ("pipeline_patch", "node_patch", "expected_loc", "expected_type"),
     [
         ({"concurrency": 0}, {}, ("concurrency",), "greater_than_equal"),
