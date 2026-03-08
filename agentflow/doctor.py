@@ -7,7 +7,12 @@ import shutil
 import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
+from agentflow.prepared import PreparedExecution, build_execution_paths
+from agentflow.runners.local import LocalRunner
+from agentflow.specs import AgentKind, LocalTarget, resolve_provider
 from agentflow.utils import looks_sensitive_key
 
 
@@ -28,6 +33,32 @@ _BASH_INTERACTIVE_STDERR_NOISE = (
     "bash: no job control in this shell",
 )
 _DIAGNOSTIC_TOKEN_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
+
+
+def _object_value(obj: object, key: str, default: Any = None) -> Any:
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def _status_value(value: object) -> str:
+    raw = getattr(value, "value", value)
+    return str(raw or "")
+
+
+def _coerce_local_target(target: object) -> LocalTarget | None:
+    if _status_value(_object_value(target, "kind")).lower() != "local":
+        return None
+
+    payload = {
+        "kind": "local",
+        "cwd": _object_value(target, "cwd"),
+        "shell": _object_value(target, "shell"),
+        "shell_login": bool(_object_value(target, "shell_login", False)),
+        "shell_interactive": bool(_object_value(target, "shell_interactive", False)),
+        "shell_init": _object_value(target, "shell_init"),
+    }
+    return LocalTarget.model_validate(payload)
 
 
 def _strip_shell_comments(line: str) -> str:
@@ -197,6 +228,128 @@ class ShellBridgeRecommendation:
 
     def as_dict(self) -> dict[str, str]:
         return asdict(self)
+
+
+def _dict_env(env: object) -> dict[str, str]:
+    if not isinstance(env, dict):
+        return {}
+    return {
+        str(key): str(value)
+        for key, value in env.items()
+        if value is not None
+    }
+
+
+def _has_nonempty_env_value(env: object, key: str) -> bool:
+    if not isinstance(env, dict):
+        return False
+    return bool(str(env.get(key, "")).strip())
+
+
+def _local_codex_auth_check_detail(node_id: str) -> str:
+    return (
+        f"Node `{node_id}` (codex) cannot authenticate local Codex after the node shell bootstrap; "
+        "`codex login status` fails and `OPENAI_API_KEY` is not set in the current environment, `node.env`, or `provider.env`."
+    )
+
+
+def _node_pipeline_workdir(node: object, pipeline: object | None = None) -> Path:
+    working_path = _object_value(node, "working_path")
+    if working_path is None and pipeline is not None:
+        working_path = _object_value(pipeline, "working_path")
+    if working_path is None:
+        return Path.cwd().resolve()
+    return Path(str(working_path)).expanduser().resolve()
+
+
+def _prepared_codex_auth_execution(node: object, pipeline: object | None = None) -> tuple[PreparedExecution, object] | None:
+    agent = _status_value(_object_value(node, "agent")).lower()
+    if agent != AgentKind.CODEX.value:
+        return None
+
+    target = _coerce_local_target(_object_value(node, "target"))
+    if target is None:
+        return None
+
+    provider = resolve_provider(_object_value(node, "provider"), AgentKind.CODEX)
+    env = _dict_env(_object_value(provider, "env"))
+    env.update(_dict_env(_object_value(node, "env")))
+
+    pipeline_workdir = _node_pipeline_workdir(node, pipeline)
+    paths = build_execution_paths(
+        base_dir=Path.cwd() / ".agentflow" / "doctor",
+        pipeline_workdir=pipeline_workdir,
+        run_id="doctor",
+        node_id=str(_object_value(node, "id", "codex")),
+        node_target=target,
+        create_runtime_dir=False,
+    )
+    prepared = PreparedExecution(
+        command=["codex", "login", "status"],
+        env=env,
+        cwd=str(paths.host_workdir),
+        trace_kind="final",
+    )
+    return prepared, paths
+
+
+def _can_authenticate_local_codex(node: object, pipeline: object | None = None) -> bool:
+    prepared_with_paths = _prepared_codex_auth_execution(node, pipeline)
+    if prepared_with_paths is None:
+        return True
+
+    prepared, paths = prepared_with_paths
+    if _has_nonempty_env_value(prepared.env, "OPENAI_API_KEY") or bool(str(os.getenv("OPENAI_API_KEY", "")).strip()):
+        return True
+
+    try:
+        launch_plan = LocalRunner().plan_execution(
+            SimpleNamespace(target=_coerce_local_target(_object_value(node, "target"))),
+            prepared,
+            paths,
+        )
+    except Exception:
+        return False
+
+    env = os.environ.copy()
+    env.update(launch_plan.env)
+    try:
+        result = subprocess.run(
+            launch_plan.command,
+            check=False,
+            capture_output=True,
+            cwd=launch_plan.cwd,
+            env=env,
+            text=True,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0
+
+
+def build_pipeline_local_codex_auth_checks(pipeline: object) -> list[DoctorCheck]:
+    checks: list[DoctorCheck] = []
+    for node in _object_value(pipeline, "nodes", []) or []:
+        agent = _status_value(_object_value(node, "agent")).lower()
+        if agent != AgentKind.CODEX.value:
+            continue
+
+        target = _coerce_local_target(_object_value(node, "target"))
+        if target is None:
+            continue
+
+        if _can_authenticate_local_codex(node, pipeline):
+            continue
+
+        node_id = str(_object_value(node, "id", "codex"))
+        checks.append(
+            DoctorCheck(
+                name="codex_auth",
+                status="failed",
+                detail=_local_codex_auth_check_detail(node_id),
+            )
+        )
+    return checks
 
 
 def _check_executable(name: str) -> DoctorCheck:
