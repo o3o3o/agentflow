@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -31,7 +32,11 @@ class Orchestrator:
             nodes={node.id: NodeResult(node_id=node.id) for node in pipeline.nodes},
         )
         await self.store.create_run(run)
-        asyncio.create_task(self.run(run_id))
+
+        def _background() -> None:
+            asyncio.run(self.run(run_id))
+
+        threading.Thread(target=_background, name=f"agentflow-{run_id}", daemon=True).start()
         return run
 
     async def wait(self, run_id: str, timeout: float | None = None) -> RunRecord:

@@ -71,7 +71,7 @@ def create_app(*, store: RunStore | None = None, orchestrator: Orchestrator | No
                 for cached in app.state.store.get_events(run_id):
                     yield f"data: {cached.model_dump_json()}\n\n"
                 while True:
-                    event = await queue.get()
+                    event = await asyncio.to_thread(queue.get)
                     yield f"data: {event.model_dump_json()}\n\n"
                     run = app.state.store.get_run(run_id)
                     if run.status.value in {"completed", "failed"} and event.type == "run_completed":
