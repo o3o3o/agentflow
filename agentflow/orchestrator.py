@@ -14,7 +14,7 @@ from agentflow.specs import NodeAttempt, NodeResult, NodeStatus, PipelineSpec, R
 from agentflow.store import RunStore
 from agentflow.success import evaluate_success
 from agentflow.traces import create_trace_parser
-from agentflow.utils import utcnow_iso
+from agentflow.utils import looks_sensitive_key, utcnow_iso
 
 
 @dataclass(slots=True)
@@ -118,10 +118,7 @@ class Orchestrator:
         await self._publish(run_id, "node_trace", node_id=node_id, trace=event.model_dump(mode="json"))
 
     def _is_sensitive_launch_key(self, key: str) -> bool:
-        upper = key.upper()
-        return upper in {"AUTHORIZATION", "X-API-KEY", "X_API_KEY"} or any(
-            marker in upper for marker in ("KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "COOKIE")
-        )
+        return looks_sensitive_key(key)
 
     def _sanitize_launch_value(self, key: str | None, value: Any) -> Any:
         if key and self._is_sensitive_launch_key(key) and value is not None:

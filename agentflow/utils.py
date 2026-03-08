@@ -9,6 +9,7 @@ from jinja2 import Environment, StrictUndefined
 
 
 _TEMPLATE_ENV = Environment(undefined=StrictUndefined, autoescape=False, trim_blocks=True, lstrip_blocks=True)
+_SENSITIVE_KEY_PARTS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "AUTH", "COOKIE", "HEADER")
 
 
 def utcnow_iso() -> str:
@@ -35,3 +36,8 @@ def path_within(base: Path, candidate: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def looks_sensitive_key(key: str) -> bool:
+    upper = key.upper()
+    return any(part in upper for part in _SENSITIVE_KEY_PARTS)

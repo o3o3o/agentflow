@@ -9,11 +9,10 @@ from agentflow.context import render_node_prompt
 from agentflow.prepared import build_execution_paths
 from agentflow.runners.registry import RunnerRegistry, default_runner_registry
 from agentflow.specs import NodeResult, NodeSpec, NodeStatus, PipelineSpec, resolve_provider
+from agentflow.utils import looks_sensitive_key
 
 _REDACTED = "<redacted>"
 _GENERATED = "<generated>"
-_SENSITIVE_ENV_PARTS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "AUTH", "COOKIE", "HEADER")
-
 
 def _preview_text(text: str | None, *, limit: int = 100) -> str | None:
     if text is None:
@@ -52,15 +51,10 @@ def _build_placeholder_results(pipeline: PipelineSpec) -> dict[str, NodeResult]:
     return results
 
 
-def _looks_sensitive_env_key(key: str) -> bool:
-    upper = key.upper()
-    return any(part in upper for part in _SENSITIVE_ENV_PARTS)
-
-
 # Keep non-secret debugging values readable while redacting likely credentials.
 def _sanitize_env(env: dict[str, str]) -> dict[str, str]:
     return {
-        key: (_REDACTED if _looks_sensitive_env_key(key) else value)
+        key: (_REDACTED if looks_sensitive_key(key) else value)
         for key, value in sorted(env.items())
     }
 
@@ -75,7 +69,7 @@ def _sanitize_payload(value: Any, *, key: str | None = None) -> Any:
         return {inner_key: _sanitize_payload(inner_value, key=inner_key) for inner_key, inner_value in value.items()}
     if isinstance(value, list):
         return [_sanitize_payload(item) for item in value]
-    if key and _looks_sensitive_env_key(key):
+    if key and looks_sensitive_key(key):
         return _REDACTED
     return value
 
