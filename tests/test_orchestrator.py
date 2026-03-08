@@ -264,6 +264,48 @@ async def test_orchestrator_cancels_running_nodes(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_orchestrator_persists_cancel_stderr_before_first_attempt(tmp_path: Path, monkeypatch):
+    original_publish = Orchestrator._publish
+    node_started = asyncio.Event()
+    release_node = asyncio.Event()
+
+    async def gated_publish(self, run_id: str, event_type: str, *, node_id: str | None = None, **data):
+        await original_publish(self, run_id, event_type, node_id=node_id, **data)
+        if event_type == "node_started" and node_id == "slow":
+            node_started.set()
+            await release_node.wait()
+
+    monkeypatch.setattr(Orchestrator, "_publish", gated_publish)
+
+    orchestrator = make_orchestrator(tmp_path)
+    pipeline = PipelineSpec.model_validate(
+        {
+            "name": "cancel-before-attempt",
+            "working_dir": str(tmp_path),
+            "nodes": [
+                {
+                    "id": "slow",
+                    "agent": "codex",
+                    "prompt": "cancel before attempt",
+                    "timeout_seconds": 30,
+                }
+            ],
+        }
+    )
+
+    run = await orchestrator.submit(pipeline)
+    await asyncio.wait_for(node_started.wait(), timeout=5)
+    await orchestrator.cancel(run.id)
+    release_node.set()
+
+    completed = await orchestrator.wait(run.id, timeout=5)
+
+    assert completed.status.value == "cancelled"
+    assert completed.nodes["slow"].status.value == "cancelled"
+    assert "Cancelled by user" in orchestrator.store.read_artifact_text(completed.id, "slow", "stderr.log")
+
+
+@pytest.mark.asyncio
 async def test_orchestrator_writes_redacted_launch_artifact(tmp_path: Path):
     adapters = AdapterRegistry()
     adapters.register(AgentKind.CODEX, LaunchPlanAdapter())
