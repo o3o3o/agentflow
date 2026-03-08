@@ -540,7 +540,7 @@ def _check_kimi_shell_helper(home: Path | None = None) -> DoctorCheck:
             f"{shlex.quote('claude')} --version >/dev/null 2>&1 || exit {_CLAUDE_AFTER_KIMI_VERSION_FAILED_EXIT_CODE}",
             f"type {shlex.quote('codex')} >/dev/null 2>&1 || exit {_CODEX_AFTER_KIMI_MISSING_EXIT_CODE}",
             (
-                "codex login status >/dev/null 2>&1 "
+                "codex login status >/dev/null 2>&1 || [ -n \"${OPENAI_API_KEY:-}\" ] "
                 f"|| exit {_CODEX_LOGIN_STATUS_AFTER_KIMI_FAILED_EXIT_CODE}"
             ),
         ]
@@ -566,7 +566,7 @@ def _check_kimi_shell_helper(home: Path | None = None) -> DoctorCheck:
             detail=(
                 "`kimi` is available in `bash -lic`, exports `ANTHROPIC_API_KEY`, "
                 f"sets `ANTHROPIC_BASE_URL={_EXPECTED_KIMI_ANTHROPIC_BASE_URL}`, "
-                "keeps both `claude` and `codex` available, and confirms `codex login status` succeeds "
+                "keeps both `claude` and `codex` available, and confirms Codex authentication is ready via `codex login status` or `OPENAI_API_KEY` "
                 "for the bundled smoke pipeline."
             ),
         )
@@ -608,8 +608,9 @@ def _check_kimi_shell_helper(home: Path | None = None) -> DoctorCheck:
             name="kimi_shell_helper",
             status="failed",
             detail=(
-                "`kimi` runs in `bash -lic`, and `codex` is on PATH afterwards, but `codex login status` still "
-                "fails; make sure Codex is logged in or `OPENAI_API_KEY` is exported in that shared smoke shell."
+                "`kimi` runs in `bash -lic`, and `codex` is on PATH afterwards, but neither `codex login "
+                "status` succeeds nor `OPENAI_API_KEY` is exported; make sure Codex is logged in or "
+                "`OPENAI_API_KEY` is exported in that shared smoke shell."
             ),
         )
     if result.returncode == _KIMI_API_KEY_MISSING_EXIT_CODE:

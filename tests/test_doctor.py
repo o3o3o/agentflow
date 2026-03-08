@@ -10,7 +10,7 @@ from agentflow.doctor import build_bash_login_shell_bridge_recommendation, build
 _KIMI_HELPER_OK_DETAIL = (
     "`kimi` is available in `bash -lic`, exports `ANTHROPIC_API_KEY`, "
     "sets `ANTHROPIC_BASE_URL=https://api.kimi.com/coding/`, keeps both `claude` and `codex` available, "
-    "and confirms `codex login status` succeeds for the bundled smoke pipeline."
+    "and confirms Codex authentication is ready via `codex login status` or `OPENAI_API_KEY` for the bundled smoke pipeline."
 )
 
 
