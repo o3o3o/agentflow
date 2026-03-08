@@ -422,14 +422,44 @@ def test_smoke_runs_when_bundled_preflight_warns(monkeypatch):
 
     assert result.exit_code == 0
     assert "Run smoke-warning: completed" in result.stdout
-    assert json.loads(result.stderr) == {
-        "status": "warning",
-        "checks": [{"name": "claude", "status": "warning", "detail": "bootstrap-only"}],
-    }
+    assert result.stderr == "Doctor: warning\n- claude: warning - bootstrap-only\n"
     assert captured["loaded_path"] == "examples/local-real-agents-kimi-smoke.yaml"
     assert captured["submitted_pipeline"] is fake_pipeline
     assert captured["wait_run_id"] == "smoke-warning"
     assert captured["wait_timeout"] is None
+
+
+def test_smoke_warn_preflight_honors_json_output(monkeypatch):
+    class FakeOrchestrator:
+        async def submit(self, pipeline: object):
+            return SimpleNamespace(id="smoke-warning-json")
+
+        async def wait(self, run_id: str, timeout: float | None = None):
+            return _completed_run(run_id, pipeline_name="local-real-agents-kimi-smoke")
+
+    monkeypatch.setattr(
+        agentflow.cli,
+        "build_local_smoke_doctor_report",
+        lambda: DoctorReport(
+            status="warning",
+            checks=[DoctorCheck(name="claude", status="warning", detail="bootstrap-only")],
+        ),
+    )
+    monkeypatch.setattr(
+        agentflow.cli,
+        "_build_runtime",
+        lambda runs_dir, max_concurrent_runs: (SimpleNamespace(run_dir=lambda run_id: Path(runs_dir) / run_id), FakeOrchestrator()),
+    )
+    monkeypatch.setattr(agentflow.cli, "default_smoke_pipeline_path", lambda: "examples/local-real-agents-kimi-smoke.yaml")
+    monkeypatch.setattr(agentflow.cli, "_load_pipeline", lambda path: object())
+
+    result = runner.invoke(app, ["smoke", "--output", "json"])
+
+    assert result.exit_code == 0
+    assert json.loads(result.stderr) == {
+        "status": "warning",
+        "checks": [{"name": "claude", "status": "warning", "detail": "bootstrap-only"}],
+    }
 
 
 def test_smoke_accepts_explicit_pipeline_path(monkeypatch):
@@ -571,6 +601,17 @@ def test_smoke_stops_when_bundled_preflight_fails(monkeypatch):
     monkeypatch.setattr(agentflow.cli, "_load_pipeline", lambda path: (_ for _ in ()).throw(AssertionError("pipeline should not load")))
 
     result = runner.invoke(app, ["smoke"])
+
+    assert result.exit_code == 1
+    assert result.stdout == "Doctor: failed\n- kimi_shell_helper: failed - missing\n"
+
+
+def test_smoke_failed_preflight_honors_json_output(monkeypatch):
+    monkeypatch.setattr(agentflow.cli, "build_local_smoke_doctor_report", lambda: _doctor_report(status="failed", detail="missing"))
+    monkeypatch.setattr(agentflow.cli, "default_smoke_pipeline_path", lambda: "examples/local-real-agents-kimi-smoke.yaml")
+    monkeypatch.setattr(agentflow.cli, "_load_pipeline", lambda path: (_ for _ in ()).throw(AssertionError("pipeline should not load")))
+
+    result = runner.invoke(app, ["smoke", "--output", "json"])
 
     assert result.exit_code == 1
     assert json.loads(result.stdout) == {
