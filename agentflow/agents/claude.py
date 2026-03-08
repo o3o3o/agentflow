@@ -34,7 +34,7 @@ _CLAUDE_READ_WRITE_TOOLS = _CLAUDE_READ_ONLY_TOOLS + [
 
 class ClaudeAdapter(AgentAdapter):
     def prepare(self, node: NodeSpec, prompt: str, paths: ExecutionPaths) -> PreparedExecution:
-        provider = self.provider_config(node.provider)
+        provider = self.provider_config(node.provider, node.agent)
         executable = node.executable or "claude"
         command = [
             executable,

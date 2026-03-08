@@ -57,6 +57,46 @@ class ProviderConfig(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
 
 
+def resolve_provider(value: str | ProviderConfig | None, agent: AgentKind) -> ProviderConfig | None:
+    if value is None:
+        return None
+    if isinstance(value, ProviderConfig):
+        return value
+
+    alias = value.strip().lower()
+    if alias == "openai" and agent == AgentKind.CODEX:
+        return ProviderConfig(
+            name="openai",
+            base_url="https://api.openai.com/v1",
+            api_key_env="OPENAI_API_KEY",
+            wire_api="responses",
+        )
+    if alias == "anthropic" and agent == AgentKind.CLAUDE:
+        return ProviderConfig(
+            name="anthropic",
+            base_url="https://api.anthropic.com",
+            api_key_env="ANTHROPIC_API_KEY",
+        )
+    if alias in {"kimi", "moonshot", "moonshot-ai"}:
+        if agent == AgentKind.CLAUDE:
+            return ProviderConfig(
+                name="kimi",
+                base_url="https://api.kimi.com/coding/",
+                api_key_env="ANTHROPIC_API_KEY",
+            )
+        if agent == AgentKind.KIMI:
+            return ProviderConfig(
+                name="moonshot",
+                base_url="https://api.moonshot.ai/v1",
+                api_key_env="KIMI_API_KEY",
+            )
+        raise ValueError(
+            "provider 'kimi' is not supported for codex nodes because Codex requires an "
+            "OpenAI Responses API backend and Kimi's public endpoints do not expose /responses"
+        )
+    return ProviderConfig(name=value)
+
+
 class MCPServerSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -160,6 +200,7 @@ class NodeSpec(BaseModel):
     @model_validator(mode="after")
     def ensure_unique_dependencies(self) -> "NodeSpec":
         self.depends_on = list(dict.fromkeys(self.depends_on))
+        resolve_provider(self.provider, self.agent)
         return self
 
 

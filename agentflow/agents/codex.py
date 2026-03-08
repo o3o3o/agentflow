@@ -64,7 +64,7 @@ class CodexAdapter(AgentAdapter):
         return "\n".join(lines) + "\n"
 
     def prepare(self, node: NodeSpec, prompt: str, paths: ExecutionPaths) -> PreparedExecution:
-        provider = self.provider_config(node.provider)
+        provider = self.provider_config(node.provider, node.agent)
         executable = node.executable or "codex"
         sandbox = "read-only" if node.tools == ToolAccess.READ_ONLY else "workspace-write"
         command = [

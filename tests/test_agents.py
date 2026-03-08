@@ -5,6 +5,7 @@ from pathlib import Path
 
 from agentflow.agents.claude import ClaudeAdapter
 from agentflow.agents.codex import CodexAdapter
+from agentflow.agents.kimi import KimiAdapter
 from agentflow.prepared import ExecutionPaths
 from agentflow.specs import NodeSpec
 
@@ -57,3 +58,38 @@ def test_codex_adapter_uses_current_exec_flags(tmp_path):
     assert prepared.command[:4] == ["codex", "exec", "--json", "--skip-git-repo-check"]
     assert "--ask-for-approval" not in prepared.command
     assert prepared.command[4:8] == ["-c", 'approval_policy="never"', "--sandbox", "read-only"]
+
+
+def test_claude_adapter_supports_kimi_provider_alias(tmp_path, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-kimi-secret")
+    node = NodeSpec.model_validate(
+        {
+            "id": "review",
+            "agent": "claude",
+            "prompt": "Review",
+            "provider": "kimi",
+        }
+    )
+
+    prepared = ClaudeAdapter().prepare(node, "Review", _paths(tmp_path))
+
+    assert prepared.env["ANTHROPIC_BASE_URL"] == "https://api.kimi.com/coding/"
+    assert prepared.env["ANTHROPIC_API_KEY"] == "test-kimi-secret"
+
+
+def test_kimi_adapter_supports_provider_alias(tmp_path):
+    node = NodeSpec.model_validate(
+        {
+            "id": "review",
+            "agent": "kimi",
+            "prompt": "Review",
+            "provider": "kimi",
+        }
+    )
+
+    prepared = KimiAdapter().prepare(node, "Review", _paths(tmp_path))
+    request = json.loads(prepared.runtime_files["kimi-request.json"])
+
+    assert request["provider"]["name"] == "moonshot"
+    assert request["provider"]["base_url"] == "https://api.moonshot.ai/v1"
+    assert request["provider"]["api_key_env"] == "KIMI_API_KEY"

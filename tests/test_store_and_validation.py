@@ -22,6 +22,19 @@ def test_pipeline_validation_rejects_cycles():
         )
 
 
+def test_pipeline_validation_rejects_codex_kimi_provider_alias():
+    with pytest.raises(ValueError, match="provider 'kimi' is not supported for codex nodes"):
+        PipelineSpec.model_validate(
+            {
+                "name": "invalid-provider",
+                "working_dir": ".",
+                "nodes": [
+                    {"id": "plan", "agent": "codex", "prompt": "plan", "provider": "kimi"},
+                ],
+            }
+        )
+
+
 @pytest.mark.asyncio
 async def test_store_loads_runs_and_artifacts_from_disk(tmp_path):
     pipeline = PipelineSpec.model_validate(

@@ -10,7 +10,7 @@ from agentflow.specs import NodeSpec
 
 class KimiAdapter(AgentAdapter):
     def prepare(self, node: NodeSpec, prompt: str, paths: ExecutionPaths) -> PreparedExecution:
-        provider = self.provider_config(node.provider)
+        provider = self.provider_config(node.provider, node.agent)
         request = {
             "prompt": prompt,
             "model": node.model or "kimi-k2-turbo-preview",
