@@ -306,6 +306,36 @@ def test_kimi_shell_init_requires_interactive_bash_warning_keeps_generic_warning
     )
 
 
+def test_kimi_shell_init_requires_interactive_bash_warning_accepts_wrapper_that_sources_profile_with_kimi(
+    tmp_path: Path,
+):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".profile").write_text("kimi(){ :; }\n", encoding="utf-8")
+    target = {
+        "kind": "local",
+        "shell": "bash -lc 'source ~/.profile && kimi && {command}'",
+    }
+
+    assert kimi_shell_init_requires_interactive_bash_warning(target, home=home) is None
+
+
+def test_kimi_shell_init_requires_interactive_bash_warning_accepts_shell_init_after_sourced_login_file(
+    tmp_path: Path,
+):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".bash_profile").write_text('source "$HOME/.agentflow-kimi"\n', encoding="utf-8")
+    (home / ".agentflow-kimi").write_text("kimi(){ :; }\n", encoding="utf-8")
+    target = {
+        "kind": "local",
+        "shell": "bash -lc 'source ~/.bash_profile && {command}'",
+        "shell_init": ["command -v kimi >/dev/null 2>&1", "kimi"],
+    }
+
+    assert kimi_shell_init_requires_interactive_bash_warning(target, home=home) is None
+
+
 def test_shell_init_exports_env_var_detects_exported_provider_key():
     assert shell_init_exports_env_var(["export ANTHROPIC_API_KEY=test-shell-key"], "ANTHROPIC_API_KEY") is True
 
