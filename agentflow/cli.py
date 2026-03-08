@@ -325,9 +325,9 @@ def _doctor_report():
 def _doctor_report_for_path(path: str | None = None):
     report = _doctor_report()
     if path is None:
-        return report
+        return report, None
     pipeline = _load_pipeline(path)
-    return _augment_preflight_report(report, pipeline)
+    return _augment_preflight_report(report, pipeline), {"auto_preflight": _auto_smoke_preflight_metadata(path, pipeline)}
 
 
 def _preflight_shell_bridge_recommendation(report: object) -> object | None:
@@ -551,20 +551,46 @@ def _render_shell_bridge_summary(shell_bridge: object | None) -> str:
     )
 
 
-def _render_doctor_summary(report: object, *, include_shell_bridge: bool = False, shell_bridge: object | None = None) -> str:
+def _render_doctor_summary(
+    report: object,
+    *,
+    include_shell_bridge: bool = False,
+    shell_bridge: object | None = None,
+    pipeline: dict[str, object] | None = None,
+) -> str:
     lines = [f"Doctor: {_status_value(getattr(report, 'status', 'unknown'))}"]
     for check in getattr(report, "checks", []) or []:
         lines.append(
             f"- {getattr(check, 'name', 'unknown')}: {_status_value(getattr(check, 'status', 'unknown'))}"
             f" - {getattr(check, 'detail', '')}"
         )
+    raw_auto_preflight = pipeline.get("auto_preflight") if isinstance(pipeline, dict) else None
+    if isinstance(raw_auto_preflight, dict):
+        enabled = raw_auto_preflight.get("enabled")
+        reason = raw_auto_preflight.get("reason")
+        if isinstance(reason, str) and reason:
+            status = "enabled" if enabled else "disabled"
+            lines.append(f"Pipeline auto preflight: {status} - {reason}")
+        matches = raw_auto_preflight.get("match_summary")
+        if isinstance(matches, list):
+            rendered_matches = [match for match in matches if isinstance(match, str) and match]
+            if rendered_matches:
+                lines.append(f"Pipeline auto preflight matches: {', '.join(rendered_matches)}")
     if include_shell_bridge:
         lines.append(_render_shell_bridge_summary(shell_bridge))
     return "\n".join(lines)
 
 
-def _build_doctor_payload(report: object, *, include_shell_bridge: bool = False, shell_bridge: object | None = None) -> dict[str, object]:
+def _build_doctor_payload(
+    report: object,
+    *,
+    include_shell_bridge: bool = False,
+    shell_bridge: object | None = None,
+    pipeline: dict[str, object] | None = None,
+) -> dict[str, object]:
     payload = report.as_dict()
+    if pipeline is not None:
+        payload["pipeline"] = dict(pipeline)
     if include_shell_bridge:
         payload["shell_bridge"] = None if shell_bridge is None else shell_bridge.as_dict()
     return payload
@@ -577,16 +603,27 @@ def _echo_doctor_report(
     err: bool = False,
     include_shell_bridge: bool = False,
     shell_bridge: object | None = None,
+    pipeline: dict[str, object] | None = None,
 ) -> None:
     if output == StructuredOutputFormat.SUMMARY:
         typer.echo(
-            _render_doctor_summary(report, include_shell_bridge=include_shell_bridge, shell_bridge=shell_bridge),
+            _render_doctor_summary(
+                report,
+                include_shell_bridge=include_shell_bridge,
+                shell_bridge=shell_bridge,
+                pipeline=pipeline,
+            ),
             err=err,
         )
         return
     typer.echo(
         json.dumps(
-            _build_doctor_payload(report, include_shell_bridge=include_shell_bridge, shell_bridge=shell_bridge),
+            _build_doctor_payload(
+                report,
+                include_shell_bridge=include_shell_bridge,
+                shell_bridge=shell_bridge,
+                pipeline=pipeline,
+            ),
             indent=2,
         ),
         err=err,
@@ -688,9 +725,15 @@ def doctor(
         help="Include a ready-to-paste bash login bridge suggestion when local shell startup needs one.",
     ),
 ) -> None:
-    report = _doctor_report_for_path(path)
+    report, pipeline = _doctor_report_for_path(path)
     recommendation = build_bash_login_shell_bridge_recommendation() if shell_bridge else None
-    _echo_doctor_report(report, output=output, include_shell_bridge=shell_bridge, shell_bridge=recommendation)
+    _echo_doctor_report(
+        report,
+        output=output,
+        include_shell_bridge=shell_bridge,
+        shell_bridge=recommendation,
+        pipeline=pipeline,
+    )
     raise typer.Exit(code=0 if report.status != "failed" else 1)
 
 
