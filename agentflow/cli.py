@@ -370,14 +370,23 @@ def _pipeline_launch_env_override_checks(pipeline: object) -> list[DoctorCheck]:
             if not key:
                 continue
 
-            detail = f"Node `{node_id}`: Launch env overrides current `{key}` for this node."
+            source = override.get("source")
+            source_label = f" via `{source}`"
+            if source == "provider.api_key_env":
+                source_env_key = override.get("source_env_key")
+                if isinstance(source_env_key, str) and source_env_key:
+                    source_label = f" via `provider.api_key_env` (`{source_env_key}`)"
+            if not isinstance(source, str) or not source:
+                source_label = ""
+
+            detail = f"Node `{node_id}`: Launch env overrides current `{key}` for this node{source_label}."
             if not override.get("redacted"):
                 current_value = override.get("current_value")
                 launch_value = override.get("launch_value")
                 if isinstance(current_value, str) and isinstance(launch_value, str):
                     detail = (
                         f"Node `{node_id}`: Launch env overrides current `{key}` from `{current_value}` "
-                        f"to `{launch_value}`."
+                        f"to `{launch_value}`{source_label}."
                     )
 
             context = {"node_id": node_id, **override}

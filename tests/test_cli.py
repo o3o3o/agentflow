@@ -395,10 +395,11 @@ nodes:
             "key": "ANTHROPIC_BASE_URL",
             "current_value": "https://open.bigmodel.cn/api/anthropic",
             "launch_value": "https://api.kimi.com/coding/",
+            "source": "provider.base_url",
         }
     ]
     assert payload["nodes"][0]["warnings"] == [
-        "Launch env overrides current `ANTHROPIC_BASE_URL` from `https://open.bigmodel.cn/api/anthropic` to `https://api.kimi.com/coding/`."
+        "Launch env overrides current `ANTHROPIC_BASE_URL` from `https://open.bigmodel.cn/api/anthropic` to `https://api.kimi.com/coding/` via `provider.base_url`."
     ]
 
 
@@ -422,8 +423,12 @@ nodes:
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["nodes"][0]["launch_env_overrides"] == [{"key": "OPENAI_API_KEY", "redacted": True}]
-    assert payload["nodes"][0]["warnings"] == ["Launch env overrides current `OPENAI_API_KEY` for this node."]
+    assert payload["nodes"][0]["launch_env_overrides"] == [
+        {"key": "OPENAI_API_KEY", "redacted": True, "source": "node.env"}
+    ]
+    assert payload["nodes"][0]["warnings"] == [
+        "Launch env overrides current `OPENAI_API_KEY` for this node via `node.env`."
+    ]
 
 
 def test_inspect_command_redacts_inline_shell_bootstrap_secrets(tmp_path, monkeypatch):
@@ -2359,7 +2364,7 @@ nodes:
     assert result.stderr == (
         "Doctor: warning\n"
         "- kimi_shell_helper: ok - ready\n"
-        "- launch_env_override: warning - Node `review`: Launch env overrides current `ANTHROPIC_BASE_URL` from `https://open.bigmodel.cn/api/anthropic` to `https://api.kimi.com/coding/`.\n"
+        "- launch_env_override: warning - Node `review`: Launch env overrides current `ANTHROPIC_BASE_URL` from `https://open.bigmodel.cn/api/anthropic` to `https://api.kimi.com/coding/` via `provider.base_url`.\n"
     )
     assert getattr(captured["submitted_pipeline"], "name", None) == "bundled-smoke"
 
@@ -3718,7 +3723,7 @@ nodes:
     assert result.stdout.startswith(
         "Doctor: warning\n"
         "- kimi_shell_helper: ok - ready\n"
-        "- launch_env_override: warning - Node `review`: Launch env overrides current `ANTHROPIC_BASE_URL` from `https://open.bigmodel.cn/api/anthropic` to `https://api.kimi.com/coding/`.\n"
+        "- launch_env_override: warning - Node `review`: Launch env overrides current `ANTHROPIC_BASE_URL` from `https://open.bigmodel.cn/api/anthropic` to `https://api.kimi.com/coding/` via `provider.base_url`.\n"
     )
 
 
@@ -3754,12 +3759,13 @@ nodes:
         {
             "name": "launch_env_override",
             "status": "warning",
-            "detail": "Node `review`: Launch env overrides current `ANTHROPIC_BASE_URL` from `https://open.bigmodel.cn/api/anthropic` to `https://api.kimi.com/coding/`.",
+            "detail": "Node `review`: Launch env overrides current `ANTHROPIC_BASE_URL` from `https://open.bigmodel.cn/api/anthropic` to `https://api.kimi.com/coding/` via `provider.base_url`.",
             "context": {
                 "node_id": "review",
                 "key": "ANTHROPIC_BASE_URL",
                 "current_value": "https://open.bigmodel.cn/api/anthropic",
                 "launch_value": "https://api.kimi.com/coding/",
+                "source": "provider.base_url",
             },
         },
     ]
@@ -3795,7 +3801,7 @@ nodes:
     assert result.stdout == (
         "Doctor: warning\n"
         "- kimi_shell_helper: ok - ready\n"
-        "- launch_env_override: warning - Node `review`: Launch env overrides current `ANTHROPIC_BASE_URL` from `https://open.bigmodel.cn/api/anthropic` to `https://api.kimi.com/coding/`.\n"
+        "- launch_env_override: warning - Node `review`: Launch env overrides current `ANTHROPIC_BASE_URL` from `https://open.bigmodel.cn/api/anthropic` to `https://api.kimi.com/coding/` via `provider.base_url`.\n"
     )
 
 

@@ -329,7 +329,64 @@ def _launch_env_override_warning(key: str, current_value: str, launch_value: str
     return None
 
 
-def _launch_env_override_details(launch_env: dict[str, str]) -> list[dict[str, Any]]:
+def _launch_env_override_source_label(detail: dict[str, Any]) -> str | None:
+    source = detail.get("source")
+    if not isinstance(source, str) or not source:
+        return None
+
+    if source == "provider.api_key_env":
+        source_env_key = detail.get("source_env_key")
+        if isinstance(source_env_key, str) and source_env_key:
+            return f"`provider.api_key_env` (`{source_env_key}`)"
+
+    return f"`{source}`"
+
+
+def _format_launch_env_override_detail(detail: dict[str, Any]) -> str:
+    key = str(detail["key"])
+    source_label = _launch_env_override_source_label(detail)
+    source_suffix = f" via {source_label}" if source_label else ""
+
+    if detail.get("redacted"):
+        return f"Launch env overrides current `{key}` for this node{source_suffix}."
+
+    return (
+        f"Launch env overrides current `{key}` from `{detail['current_value']}` to `{detail['launch_value']}`"
+        f"{source_suffix}."
+    )
+
+
+def _launch_env_override_source(node: NodeSpec, resolved_provider: Any, key: str) -> dict[str, str] | None:
+    if _has_nonempty_env_value(node.env, key):
+        return {"source": "node.env"}
+
+    provider_env = getattr(resolved_provider, "env", None)
+    if _has_nonempty_env_value(provider_env, key):
+        return {"source": "provider.env"}
+
+    if resolved_provider is None:
+        return None
+
+    provider_base_url = str(getattr(resolved_provider, "base_url", "") or "").strip()
+    if key.endswith("_BASE_URL") and provider_base_url:
+        return {"source": "provider.base_url"}
+
+    provider_headers = getattr(resolved_provider, "headers", None)
+    if key.endswith("_CUSTOM_HEADERS") and provider_headers:
+        return {"source": "provider.headers"}
+
+    provider_api_key_env = str(getattr(resolved_provider, "api_key_env", "") or "").strip()
+    if key == "ANTHROPIC_API_KEY" and provider_api_key_env:
+        return {"source": "provider.api_key_env", "source_env_key": provider_api_key_env}
+
+    return None
+
+
+def _launch_env_override_details(
+    node: NodeSpec,
+    resolved_provider: Any,
+    launch_env: dict[str, str],
+) -> list[dict[str, Any]]:
     details: list[dict[str, Any]] = []
     for key, launch_value in sorted(launch_env.items()):
         current_value = os.getenv(key)
@@ -346,21 +403,22 @@ def _launch_env_override_details(launch_env: dict[str, str]) -> list[dict[str, A
             detail["launch_value"] = str(launch_value)
         else:
             detail["redacted"] = True
+        source = _launch_env_override_source(node, resolved_provider, key)
+        if source:
+            detail.update(source)
         details.append(detail)
     return details
 
 
-def _launch_env_override_warnings(launch_env: dict[str, str]) -> list[str]:
-    warnings: list[str] = []
-    for detail in _launch_env_override_details(launch_env):
-        key = str(detail["key"])
-        if detail.get("redacted"):
-            warnings.append(f"Launch env overrides current `{key}` for this node.")
-            continue
-        warnings.append(
-            f"Launch env overrides current `{key}` from `{detail['current_value']}` to `{detail['launch_value']}`."
-        )
-    return warnings
+def _launch_env_override_warnings(
+    node: NodeSpec,
+    resolved_provider: Any,
+    launch_env: dict[str, str],
+) -> list[str]:
+    return [
+        _format_launch_env_override_detail(detail)
+        for detail in _launch_env_override_details(node, resolved_provider, launch_env)
+    ]
 
 
 def _execution_mode_summary(node_plan: dict[str, Any]) -> str | None:
@@ -462,10 +520,14 @@ def build_launch_inspection(
         auth_summary = _auth_summary(node, resolved_provider)
         if auth_summary:
             node_plan["auth"] = auth_summary
-        launch_env_overrides = _launch_env_override_details(prepared.env)
+        launch_env_overrides = _launch_env_override_details(node, resolved_provider, prepared.env)
         if launch_env_overrides:
             node_plan["launch_env_overrides"] = launch_env_overrides
-        node_plan["warnings"] = _target_warnings(node_plan["target"]) + _launch_env_override_warnings(prepared.env)
+        node_plan["warnings"] = _target_warnings(node_plan["target"]) + _launch_env_override_warnings(
+            node,
+            resolved_provider,
+            prepared.env,
+        )
         node_plan["launch"]["payload_summary"] = _payload_summary(node_plan)
         inspected_nodes.append(node_plan)
 
