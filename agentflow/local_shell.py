@@ -30,6 +30,8 @@ _BASH_UNSUPPORTED_LONG_FLAG_DETAILS = {
 _COMMAND_POSITION_PREFIX_TOKENS = {"builtin", "command", "env", "nohup", "sudo", "time"}
 _ENV_ASSIGNMENT_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 _SHELL_CONTROL_TOKENS = {"&&", "||", "|", ";", "do", "then", "elif"}
+_KIMI_SUBSTITUTION_CONSUMERS = {".", "eval", "source"}
+_COMMAND_SUBSTITUTION_PATTERN = re.compile(r"(?:\$|<)\(([^()]*)\)")
 
 
 def _target_value(target: Any, key: str) -> Any:
@@ -87,6 +89,13 @@ def _looks_like_kimi_token(token: str) -> bool:
     if not stripped:
         return False
     return os.path.basename(stripped) == "kimi"
+
+
+def _token_uses_kimi_substitution(token: str) -> bool:
+    for body in _COMMAND_SUBSTITUTION_PATTERN.findall(token):
+        if shell_command_uses_kimi_helper(body):
+            return True
+    return False
 
 
 def invalid_bash_long_option_error(command: str | None) -> str | None:
@@ -192,7 +201,10 @@ def shell_command_uses_kimi_helper(command: str | None) -> bool:
     tokens = _split_shell_parts(command)
     expects_command = True
     prefix_allows_options = False
+    active_command: str | None = None
     for index, token in enumerate(tokens):
+        if active_command in _KIMI_SUBSTITUTION_CONSUMERS and _token_uses_kimi_substitution(token):
+            return True
         if _looks_like_kimi_token(token) and not _is_kimi_probe_argument(tokens, index):
             if expects_command:
                 return True
@@ -208,9 +220,11 @@ def shell_command_uses_kimi_helper(command: str | None) -> bool:
                 continue
             expects_command = False
             prefix_allows_options = False
+            active_command = os.path.basename(token)
         if _token_resets_command_position(token):
             expects_command = True
             prefix_allows_options = False
+            active_command = None
     return False
 
 
