@@ -485,7 +485,6 @@ def _pipeline_launch_inspection_nodes(pipeline: object) -> list[dict[str, object
 
 
 def _pipeline_launch_env_override_checks(nodes: list[dict[str, object]]) -> list[DoctorCheck]:
-    
     checks: list[DoctorCheck] = []
     for node in nodes:
         node_id = str(node.get("id") or "node")
@@ -546,6 +545,41 @@ def _pipeline_launch_env_override_checks(nodes: list[dict[str, object]]) -> list
                     status=status,
                     detail=detail,
                     context=context,
+                )
+            )
+    return checks
+
+
+def _pipeline_bootstrap_env_override_checks(nodes: list[dict[str, object]]) -> list[DoctorCheck]:
+    checks: list[DoctorCheck] = []
+    for node in nodes:
+        node_id = str(node.get("id") or "node")
+        for override in node.get("bootstrap_env_overrides", []) or []:
+            if not isinstance(override, dict):
+                continue
+
+            key = str(override.get("key") or "")
+            if not key:
+                continue
+
+            source = override.get("source")
+            source_label = f" via `{source}`"
+            if override.get("helper") == "kimi" and isinstance(source, str) and source:
+                source_label = f" via `{source}` (`kimi` helper)"
+            elif source == "target.bash_startup":
+                source_label = " via local bash startup files"
+            elif not isinstance(source, str) or not source:
+                source_label = ""
+
+            checks.append(
+                DoctorCheck(
+                    name="bootstrap_env_override",
+                    status="ok",
+                    detail=(
+                        f"Node `{node_id}`: Local shell bootstrap overrides current `{key}` for this node"
+                        f"{source_label}."
+                    ),
+                    context={"node_id": node_id, **override},
                 )
             )
     return checks
@@ -901,6 +935,7 @@ def _augment_preflight_report(report: object, pipeline: object) -> object:
         report,
         [
             *_pipeline_launch_env_override_checks(inspection_nodes),
+            *_pipeline_bootstrap_env_override_checks(inspection_nodes),
             *_pipeline_launch_env_inheritance_checks(inspection_nodes),
         ],
     )

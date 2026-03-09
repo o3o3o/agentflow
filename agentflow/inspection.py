@@ -357,6 +357,41 @@ def _auth_summary(
     return f"expects `{api_key_env}` via {', '.join(expectation_sources[:-1])}, or {expectation_sources[-1]}"
 
 
+def _local_bootstrap_auth_override_source(
+    node: NodeSpec,
+    resolved_provider: object,
+    api_key_env: str,
+    launch_env: dict[str, str] | None = None,
+    *,
+    cwd: str | None = None,
+) -> dict[str, str] | None:
+    target = node.target
+    if getattr(target, "kind", None) != "local":
+        return None
+
+    effective_home = target_bash_home(target, env=launch_env, cwd=cwd)
+    shell_init = getattr(target, "shell_init", None)
+    if shell_init_exports_env_var(shell_init, api_key_env, home=effective_home, cwd=cwd):
+        return {"source": "target.shell_init"}
+
+    shell = getattr(target, "shell", None)
+    if shell_template_exports_env_var_before_command(
+        shell if isinstance(shell, str) else None,
+        api_key_env,
+        home=effective_home,
+        cwd=cwd,
+    ) or shell_command_prefixes_env_var(shell if isinstance(shell, str) else None, api_key_env):
+        return {"source": "target.shell"}
+
+    helper_bootstrap_source = None
+    if api_key_env == "ANTHROPIC_API_KEY":
+        helper_bootstrap_source = _kimi_helper_bootstrap_source(target)
+    if _helper_bootstrap_is_primary_auth_source(node, resolved_provider, api_key_env, helper_bootstrap_source):
+        return {"source": helper_bootstrap_source[1], "helper": "kimi"}
+
+    return None
+
+
 def _bootstrap_summary(
     target: dict[str, Any],
     launch_env: dict[str, str] | None = None,
@@ -454,6 +489,20 @@ def _launch_env_override_source_label(detail: dict[str, Any]) -> str | None:
     return f"`{source}`"
 
 
+def _bootstrap_env_override_source_label(detail: dict[str, Any]) -> str | None:
+    source = detail.get("source")
+    if not isinstance(source, str) or not source:
+        return None
+
+    if detail.get("helper") == "kimi":
+        return f"`{source}` (`kimi` helper)"
+
+    if source == "target.bash_startup":
+        return "local bash startup files"
+
+    return f"`{source}`"
+
+
 def _format_launch_env_override_detail(detail: dict[str, Any]) -> str:
     key = str(detail["key"])
     source_label = _launch_env_override_source_label(detail)
@@ -471,6 +520,13 @@ def _format_launch_env_override_detail(detail: dict[str, Any]) -> str:
         f"Launch env overrides current `{key}` from `{current_value}` to `{launch_value}`"
         f"{source_suffix}."
     )
+
+
+def _format_bootstrap_env_override_detail(detail: dict[str, Any]) -> str:
+    key = str(detail["key"])
+    source_label = _bootstrap_env_override_source_label(detail)
+    source_suffix = f" via {source_label}" if source_label else ""
+    return f"Local shell bootstrap overrides current `{key}` for this node{source_suffix}."
 
 
 def _launch_env_override_source(node: NodeSpec, resolved_provider: Any, key: str) -> dict[str, str] | None:
@@ -535,6 +591,57 @@ def _launch_env_override_warnings(
     return [
         _format_launch_env_override_detail(detail)
         for detail in _launch_env_override_details(node, resolved_provider, launch_env)
+    ]
+
+
+def _bootstrap_env_override_details(
+    node: NodeSpec,
+    resolved_provider: Any,
+    launch_env: dict[str, str],
+    *,
+    cwd: str | None = None,
+) -> list[dict[str, Any]]:
+    api_key_env, _provider_name = _resolved_auth_requirement(node)
+    if not api_key_env:
+        return []
+
+    if api_key_env == "ANTHROPIC_API_KEY" and not any(
+        str(detail.get("key") or "") == "ANTHROPIC_BASE_URL"
+        for detail in _launch_env_override_details(node, resolved_provider, launch_env)
+    ):
+        return []
+
+    current_value = str(os.getenv(api_key_env, "") or "").strip()
+    if not current_value:
+        return []
+
+    source = _local_bootstrap_auth_override_source(
+        node,
+        resolved_provider,
+        api_key_env,
+        launch_env,
+        cwd=cwd,
+    )
+    if source is None:
+        return []
+
+    detail: dict[str, Any] = {"key": api_key_env}
+    if looks_sensitive_key(api_key_env):
+        detail["redacted"] = True
+    detail.update(source)
+    return [detail]
+
+
+def _bootstrap_env_override_warnings(
+    node: NodeSpec,
+    resolved_provider: Any,
+    launch_env: dict[str, str],
+    *,
+    cwd: str | None = None,
+) -> list[str]:
+    return [
+        _format_bootstrap_env_override_detail(detail)
+        for detail in _bootstrap_env_override_details(node, resolved_provider, launch_env, cwd=cwd)
     ]
 
 
@@ -733,6 +840,14 @@ def build_launch_inspection(
         launch_env_overrides = _launch_env_override_details(node, resolved_provider, prepared.env)
         if launch_env_overrides:
             node_plan["launch_env_overrides"] = launch_env_overrides
+        bootstrap_env_overrides = _bootstrap_env_override_details(
+            node,
+            resolved_provider,
+            prepared.env,
+            cwd=prepared.cwd,
+        )
+        if bootstrap_env_overrides:
+            node_plan["bootstrap_env_overrides"] = bootstrap_env_overrides
         launch_env_inheritances = _launch_env_inheritance_details(
             node,
             resolved_provider,
@@ -744,6 +859,7 @@ def build_launch_inspection(
         node_plan["warnings"] = (
             _target_warnings(node_plan["target"], prepared.env, cwd=prepared.cwd)
             + _launch_env_override_warnings(node, resolved_provider, prepared.env)
+            + _bootstrap_env_override_warnings(node, resolved_provider, prepared.env, cwd=prepared.cwd)
             + _launch_env_inheritance_warnings(node, resolved_provider, prepared.env, cwd=prepared.cwd)
         )
         node_plan["launch"]["payload_summary"] = _payload_summary(node_plan)
@@ -850,6 +966,9 @@ def build_launch_inspection_summary(report: dict[str, Any]) -> dict[str, Any]:
         launch_env_overrides = node.get("launch_env_overrides")
         if launch_env_overrides:
             node_summary["launch_env_overrides"] = list(launch_env_overrides)
+        bootstrap_env_overrides = node.get("bootstrap_env_overrides")
+        if bootstrap_env_overrides:
+            node_summary["bootstrap_env_overrides"] = list(bootstrap_env_overrides)
         launch_env_inheritances = node.get("launch_env_inheritances")
         if launch_env_inheritances:
             node_summary["launch_env_inheritances"] = list(launch_env_inheritances)
