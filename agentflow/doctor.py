@@ -6,7 +6,7 @@ import shlex
 import shutil
 import subprocess
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -52,6 +52,7 @@ _DIAGNOSTIC_TOKEN_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
 _ENV_ASSIGNMENT_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 _SHELL_COMMAND_BOUNDARY_TOKENS = {"&&", "||", "|", ";", "do", "then", "elif"}
 _COMMAND_POSITION_PREFIX_TOKENS = {"builtin", "command", "env", "exec", "nohup", "sudo", "time"}
+_TOOLCHAIN_AMBIENT_BASE_URL_VARS = ("OPENAI_BASE_URL", "ANTHROPIC_BASE_URL")
 
 
 def _object_value(obj: object, key: str, default: Any = None) -> Any:
@@ -389,6 +390,7 @@ class LocalToolchainReport:
     kimi_kind: str | None = None
     kimi_path: str | None = None
     anthropic_base_url: str | None = None
+    ambient_base_urls: dict[str, str] = field(default_factory=dict)
     codex_auth: str | None = None
     codex_path: str | None = None
     codex_version: str | None = None
@@ -409,6 +411,8 @@ class LocalToolchainReport:
             payload["kimi_path"] = self.kimi_path
         if self.anthropic_base_url is not None:
             payload["anthropic_base_url"] = self.anthropic_base_url
+        if self.ambient_base_urls:
+            payload["ambient_base_urls"] = dict(self.ambient_base_urls)
         if self.codex_auth is not None:
             payload["codex_auth"] = self.codex_auth
         if self.codex_path is not None:
@@ -432,6 +436,18 @@ def _dict_env(env: object) -> dict[str, str]:
         for key, value in env.items()
         if value is not None
     }
+
+
+def _toolchain_ambient_base_urls() -> dict[str, str]:
+    ambient: dict[str, str] = {}
+    for key in _TOOLCHAIN_AMBIENT_BASE_URL_VARS:
+        value = os.getenv(key)
+        if value is None:
+            continue
+        normalized = value.strip()
+        if normalized:
+            ambient[key] = normalized
+    return ambient
 
 
 def _has_nonempty_env_value(env: object, key: str) -> bool:
@@ -1804,6 +1820,7 @@ def build_local_kimi_toolchain_report(home: Path | None = None) -> LocalToolchai
     startup_files = bash_login_startup_file_statuses(resolved_home)
     startup_summary = summarize_target_bash_login_startup(startup_target, home=resolved_home) or "n/a"
     shell_bridge = build_bash_login_shell_bridge_recommendation(resolved_home)
+    ambient_base_urls = _toolchain_ambient_base_urls()
 
     try:
         result = _run_kimi_toolchain_probe(resolved_home)
@@ -1813,6 +1830,7 @@ def build_local_kimi_toolchain_report(home: Path | None = None) -> LocalToolchai
             startup_files=startup_files,
             bash_login_startup=startup_summary,
             shell_bridge=shell_bridge,
+            ambient_base_urls=ambient_base_urls,
             detail=f"Could not launch `bash -lic` to verify `kimi`, `claude`, and `codex`: {exc}",
         )
     except _DoctorSubprocessTimeout as exc:
@@ -1821,6 +1839,7 @@ def build_local_kimi_toolchain_report(home: Path | None = None) -> LocalToolchai
             startup_files=startup_files,
             bash_login_startup=startup_summary,
             shell_bridge=shell_bridge,
+            ambient_base_urls=ambient_base_urls,
             detail=(
                 f"`kimi` verification in `bash -lic` did not finish: "
                 f"{_doctor_timeout_detail(exc.command_text, exc.timeout_seconds)}."
@@ -1838,6 +1857,7 @@ def build_local_kimi_toolchain_report(home: Path | None = None) -> LocalToolchai
             kimi_kind=parsed.get("KIMI_KIND"),
             kimi_path=parsed.get("KIMI_PATH"),
             anthropic_base_url=parsed.get("ANTHROPIC_BASE_URL"),
+            ambient_base_urls=ambient_base_urls,
             codex_auth=parsed.get("CODEX_AUTH"),
             codex_path=parsed.get("CODEX_PATH"),
             codex_version=parsed.get("CODEX_VERSION"),
@@ -1863,6 +1883,7 @@ def build_local_kimi_toolchain_report(home: Path | None = None) -> LocalToolchai
             kimi_kind=parsed.get("KIMI_KIND"),
             kimi_path=parsed.get("KIMI_PATH"),
             anthropic_base_url=parsed.get("ANTHROPIC_BASE_URL"),
+            ambient_base_urls=ambient_base_urls,
             codex_auth=parsed.get("CODEX_AUTH"),
             codex_path=parsed.get("CODEX_PATH"),
             codex_version=parsed.get("CODEX_VERSION"),
@@ -1879,6 +1900,7 @@ def build_local_kimi_toolchain_report(home: Path | None = None) -> LocalToolchai
         kimi_kind=parsed.get("KIMI_KIND"),
         kimi_path=parsed.get("KIMI_PATH"),
         anthropic_base_url=required_fields["anthropic_base_url"],
+        ambient_base_urls=ambient_base_urls,
         codex_auth=required_fields["codex_auth"],
         codex_path=parsed.get("CODEX_PATH"),
         codex_version=required_fields["codex_version"],

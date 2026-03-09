@@ -36,6 +36,8 @@ def test_build_local_kimi_toolchain_report_reports_startup_and_versions(
 ) -> None:
     home = tmp_path / "home"
     _write_login_shell_home(home)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
 
     def fake_run(*args, **kwargs):
         return subprocess.CompletedProcess(

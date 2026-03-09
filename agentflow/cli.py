@@ -1743,6 +1743,13 @@ def _render_local_toolchain_summary(report: LocalToolchainReport) -> str:
         lines.append(f"kimi: {report.kimi_path}")
     if report.anthropic_base_url:
         lines.append(f"ANTHROPIC_BASE_URL={report.anthropic_base_url}")
+    if report.ambient_base_urls:
+        for key, value in report.ambient_base_urls.items():
+            lines.append(f"ambient {key}={value}")
+        lines.append(
+            "routing note: bundled smoke clears or pins these values, but custom local Codex/Claude pipelines "
+            "inherit them unless `provider.base_url`, `provider.env`, or `node.env` overrides routing."
+        )
     if report.codex_auth:
         lines.append(f"codex auth: {report.codex_auth}")
     if report.codex_path and report.codex_version:
@@ -1789,6 +1796,9 @@ def _build_local_toolchain_summary_payload(report: LocalToolchainReport) -> dict
         kimi["anthropic_base_url"] = report.anthropic_base_url
     if kimi:
         payload["kimi"] = kimi
+
+    if report.ambient_base_urls:
+        payload["routing"] = {"ambient_base_urls": dict(report.ambient_base_urls)}
 
     codex: dict[str, str] = {}
     if report.codex_auth is not None:
