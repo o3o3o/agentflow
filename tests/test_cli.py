@@ -1529,6 +1529,36 @@ nodes:
     assert payload["nodes"][0]["auth"] == "`ANTHROPIC_API_KEY` via `target.shell`"
 
 
+def test_inspect_command_summary_treats_node_env_bash_env_file_as_auth_source(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "auth.env").write_text("export ANTHROPIC_API_KEY=test-shell-key\n", encoding="utf-8")
+    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path.write_text(
+        f"""name: inspect-claude-node-env-bash-env-provider-key
+working_dir: .
+nodes:
+  - id: review
+    agent: claude
+    provider: anthropic
+    env:
+      BASH_ENV: $HOME/auth.env
+    prompt: hi
+    target:
+      kind: local
+      shell: env HOME={home} bash -c '{{command}}'
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    result = runner.invoke(app, ["inspect", str(pipeline_path), "--output", "json-summary"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["nodes"][0]["auth"] == "`ANTHROPIC_API_KEY` via `target.shell`"
+
+
 def test_inspect_command_summary_treats_login_shell_startup_as_auth_source(tmp_path, monkeypatch):
     pipeline_path = tmp_path / "pipeline.yaml"
     pipeline_path.write_text(
@@ -6321,6 +6351,41 @@ def test_doctor_with_pipeline_path_accepts_provider_credentials_from_bash_env_fi
                 target=SimpleNamespace(
                     kind="local",
                     shell=f"env HOME={home} BASH_ENV=$HOME/auth.env bash -c '{{command}}'",
+                    cwd=None,
+                ),
+            )
+        ]
+    )
+    monkeypatch.setattr(agentflow.cli, "_load_pipeline", _capture_pipeline_loader(captured, fake_pipeline))
+
+    result = runner.invoke(app, ["doctor", "custom-smoke.yaml", "--output", "summary"])
+
+    assert result.exit_code == 0
+    assert captured["loaded_path"] == "custom-smoke.yaml"
+    assert result.stdout == (
+        "Doctor: ok\n"
+        "Pipeline auto preflight: disabled - path does not match the bundled smoke pipeline and no local Codex/Claude/Kimi node uses `kimi` bootstrap.\n"
+    )
+
+
+def test_doctor_with_pipeline_path_accepts_provider_credentials_from_node_env_bash_env_file(monkeypatch, tmp_path):
+    captured: dict[str, object] = {}
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "auth.env").write_text("export ANTHROPIC_API_KEY=test-shell-key\n", encoding="utf-8")
+
+    monkeypatch.setattr(agentflow.cli, "build_local_smoke_doctor_report", lambda: _doctor_report())
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    fake_pipeline = SimpleNamespace(
+        nodes=[
+            SimpleNamespace(
+                id="claude_review",
+                agent=SimpleNamespace(value="claude"),
+                provider="anthropic",
+                env={"BASH_ENV": "$HOME/auth.env"},
+                target=SimpleNamespace(
+                    kind="local",
+                    shell=f"env HOME={home} bash -c '{{command}}'",
                     cwd=None,
                 ),
             )
