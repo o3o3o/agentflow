@@ -226,7 +226,7 @@ Each node supports:
 - `retries` and `retry_backoff_seconds`
 - `success_criteria`: output or filesystem checks evaluated after execution
 
-Skill entries are resolved from the pipeline `working_dir`. You can point `skills:` at a plain file, a `.md` file, or a directory that contains `SKILL.md`, which keeps reusable local skill bundles easy to share across Codex, Claude, and Kimi nodes.
+Skill entries are resolved from the pipeline `working_dir`. You can point `skills:` at a plain file, a `.md` file, a home-relative path such as `~/.codex/skills/release-skill`, or a directory that contains `SKILL.md`, which keeps reusable local skill bundles easy to share across Codex, Claude, and Kimi nodes.
 
 Top-level pipeline controls include:
 
