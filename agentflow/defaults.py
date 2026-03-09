@@ -1,13 +1,35 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 
-_BUNDLED_TEMPLATE_FILES = {
-    "pipeline": "pipeline.yaml",
-    "local-kimi-smoke": "local-real-agents-kimi-smoke.yaml",
-    "local-kimi-shell-init-smoke": "local-real-agents-kimi-shell-init-smoke.yaml",
-}
+@dataclass(frozen=True)
+class BundledTemplate:
+    name: str
+    example_name: str
+    description: str
+
+
+_BUNDLED_TEMPLATES = (
+    BundledTemplate(
+        name="pipeline",
+        example_name="pipeline.yaml",
+        description="Generic Codex/Claude/Kimi starter DAG.",
+    ),
+    BundledTemplate(
+        name="local-kimi-smoke",
+        example_name="local-real-agents-kimi-smoke.yaml",
+        description="Local Codex plus Claude-on-Kimi smoke DAG using `bootstrap: kimi`.",
+    ),
+    BundledTemplate(
+        name="local-kimi-shell-init-smoke",
+        example_name="local-real-agents-kimi-shell-init-smoke.yaml",
+        description="Local Codex plus Claude-on-Kimi smoke DAG using explicit `shell_init: kimi`.",
+    ),
+)
+
+_BUNDLED_TEMPLATE_FILES = {template.name: template.example_name for template in _BUNDLED_TEMPLATES}
 
 DEFAULT_PIPELINE_YAML = """name: parallel-code-orchestration
 description: Codex plans, Claude implements, and Kimi reviews in parallel before a final Codex merge.
@@ -78,8 +100,12 @@ def bundled_example_path(name: str) -> Path:
     return Path(__file__).resolve().parents[1] / "examples" / name
 
 
+def bundled_templates() -> tuple[BundledTemplate, ...]:
+    return _BUNDLED_TEMPLATES
+
+
 def bundled_template_names() -> tuple[str, ...]:
-    return tuple(_BUNDLED_TEMPLATE_FILES)
+    return tuple(template.name for template in bundled_templates())
 
 
 def bundled_template_path(name: str) -> Path:
@@ -87,7 +113,9 @@ def bundled_template_path(name: str) -> Path:
         example_name = _BUNDLED_TEMPLATE_FILES[name]
     except KeyError as exc:
         available = ", ".join(f"`{template}`" for template in bundled_template_names())
-        raise ValueError(f"unknown bundled template `{name}` (available: {available})") from exc
+        raise ValueError(
+            f"unknown bundled template `{name}` (available: {available}; see `agentflow templates`)"
+        ) from exc
     return bundled_example_path(example_name)
 
 

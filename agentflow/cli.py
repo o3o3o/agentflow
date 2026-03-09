@@ -14,6 +14,7 @@ import yaml
 import typer
 from pydantic import ValidationError
 from agentflow.defaults import (
+    bundled_templates,
     bundled_template_names,
     load_bundled_template_yaml,
     default_smoke_pipeline_path,
@@ -1635,6 +1636,17 @@ def validate(path: str) -> None:
 
 
 @app.command()
+def templates() -> None:
+    lines = ["Bundled templates:"]
+    for template in bundled_templates():
+        lines.append(
+            f"- {template.name}: {template.description} "
+            f"(source: `examples/{template.example_name}`, use: `agentflow init --template {template.name}`)"
+        )
+    typer.echo("\n".join(lines))
+
+
+@app.command()
 def init(
     path: str | None = typer.Argument(
         None,
@@ -1644,7 +1656,7 @@ def init(
         "pipeline",
         "--template",
         "-t",
-        help=f"Bundled template name ({', '.join(bundled_template_names())}).",
+        help=f"Bundled template name ({', '.join(bundled_template_names())}). Use `agentflow templates` to list details.",
     ),
     force: bool = typer.Option(
         False,

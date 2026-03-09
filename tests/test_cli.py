@@ -283,6 +283,21 @@ def test_init_command_prints_local_kimi_smoke_template():
     assert "provider: kimi" in result.stdout
 
 
+def test_templates_command_lists_bundled_templates():
+    result = runner.invoke(app, ["templates"])
+
+    assert result.exit_code == 0
+    assert result.stdout == (
+        "Bundled templates:\n"
+        "- pipeline: Generic Codex/Claude/Kimi starter DAG. "
+        "(source: `examples/pipeline.yaml`, use: `agentflow init --template pipeline`)\n"
+        "- local-kimi-smoke: Local Codex plus Claude-on-Kimi smoke DAG using `bootstrap: kimi`. "
+        "(source: `examples/local-real-agents-kimi-smoke.yaml`, use: `agentflow init --template local-kimi-smoke`)\n"
+        "- local-kimi-shell-init-smoke: Local Codex plus Claude-on-Kimi smoke DAG using explicit `shell_init: kimi`. "
+        "(source: `examples/local-real-agents-kimi-shell-init-smoke.yaml`, use: `agentflow init --template local-kimi-shell-init-smoke`)\n"
+    )
+
+
 def test_init_command_writes_selected_template_to_destination(tmp_path):
     destination = tmp_path / "templates" / "smoke.yaml"
 
@@ -311,6 +326,7 @@ def test_init_command_rejects_unknown_template():
     assert "unknown bundled template `missing-template`" in result.stderr
     assert "`pipeline`" in result.stderr
     assert "`local-kimi-smoke`" in result.stderr
+    assert "`agentflow templates`" in result.stderr
 
 
 def test_python_module_entrypoint_displays_help():
@@ -327,6 +343,7 @@ def test_python_module_entrypoint_displays_help():
     assert completed.returncode == 0, completed.stderr
     assert "Usage:" in completed.stdout
     assert "init" in completed.stdout
+    assert "templates" in completed.stdout
     assert "validate" in completed.stdout
     assert "runs" in completed.stdout
     assert "show" in completed.stdout

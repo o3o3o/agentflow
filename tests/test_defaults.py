@@ -1,5 +1,25 @@
-from agentflow.defaults import bundled_template_names, bundled_template_path, default_smoke_pipeline_path, load_bundled_template_yaml
+from agentflow.defaults import (
+    bundled_template_names,
+    bundled_template_path,
+    bundled_templates,
+    default_smoke_pipeline_path,
+    load_bundled_template_yaml,
+)
 from agentflow.loader import load_pipeline_from_path
+
+
+def test_bundled_templates_expose_descriptions_and_example_files():
+    templates = bundled_templates()
+
+    assert tuple(template.name for template in templates) == bundled_template_names()
+
+    by_name = {template.name: template for template in templates}
+    assert by_name["pipeline"].example_name == "pipeline.yaml"
+    assert by_name["pipeline"].description == "Generic Codex/Claude/Kimi starter DAG."
+    assert by_name["local-kimi-smoke"].example_name == "local-real-agents-kimi-smoke.yaml"
+    assert "bootstrap: kimi" in by_name["local-kimi-smoke"].description
+    assert by_name["local-kimi-shell-init-smoke"].example_name == "local-real-agents-kimi-shell-init-smoke.yaml"
+    assert "shell_init: kimi" in by_name["local-kimi-shell-init-smoke"].description
 
 
 def test_bundled_smoke_pipeline_runs_both_agents_in_shared_kimi_bootstrap():
