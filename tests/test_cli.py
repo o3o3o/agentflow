@@ -5451,7 +5451,8 @@ def test_doctor_with_pipeline_path_fails_when_kimi_node_is_missing_kimi_api_key(
     assert result.stdout == (
         "Doctor: failed\n"
         "- provider_credentials: failed - Node `kimi_review` (kimi) requires `KIMI_API_KEY` for provider `moonshot`, but it is not set in the current environment, `node.env`, or `provider.env`.\n"
-        "Pipeline auto preflight: disabled - path does not match the bundled smoke pipeline and no local Codex/Claude/Kimi node uses `kimi` bootstrap.\n"
+        "Pipeline auto preflight: enabled - local Kimi-backed nodes require pipeline-specific readiness checks.\n"
+        "Pipeline auto preflight matches: kimi_review (kimi) via `agent`\n"
     )
 
 
@@ -6610,7 +6611,8 @@ def test_doctor_with_pipeline_path_accepts_kimi_api_key_from_node_env(monkeypatc
     assert captured["loaded_path"] == "custom-smoke.yaml"
     assert result.stdout == (
         "Doctor: ok\n"
-        "Pipeline auto preflight: disabled - path does not match the bundled smoke pipeline and no local Codex/Claude/Kimi node uses `kimi` bootstrap.\n"
+        "Pipeline auto preflight: enabled - local Kimi-backed nodes require pipeline-specific readiness checks.\n"
+        "Pipeline auto preflight matches: kimi_review (kimi) via `agent`\n"
     )
 
 
@@ -7527,6 +7529,7 @@ nodes:
         encoding="utf-8",
     )
     monkeypatch.setenv("AGENTFLOW_KIMI_MOCK_RESPONSE", "kimi ok")
+    monkeypatch.setenv("KIMI_API_KEY", "super-secret")
 
     result = runner.invoke(app, ["run", str(pipeline_path), "--output", "summary"])
 

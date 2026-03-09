@@ -44,7 +44,7 @@ from agentflow.local_shell import (
     target_uses_login_bash,
 )
 from agentflow.prepared import resolve_local_workdir
-from agentflow.specs import AgentKind, LocalTarget, resolve_provider
+from agentflow.specs import AgentKind, LocalTarget, provider_uses_kimi_anthropic_auth, resolve_provider
 
 app = typer.Typer(add_completion=False)
 
@@ -778,11 +778,54 @@ def _node_kimi_smoke_preflight_match(node: object) -> dict[str, str] | None:
     return None
 
 
+def _node_auto_preflight_match(node: object) -> dict[str, str] | None:
+    bootstrap_match = _node_kimi_smoke_preflight_match(node)
+    if bootstrap_match is not None:
+        return bootstrap_match
+
+    agent = _status_value(getattr(node, "agent", None)).lower()
+    if agent not in _KIMI_SHELL_PREFLIGHT_AGENTS:
+        return None
+
+    target = getattr(node, "target", None)
+    if getattr(target, "kind", None) != "local":
+        return None
+
+    node_id = str(getattr(node, "id", None) or agent)
+    if agent == AgentKind.KIMI.value:
+        return {
+            "node_id": node_id,
+            "agent": agent,
+            "trigger": "agent",
+        }
+
+    if agent == AgentKind.CLAUDE.value:
+        provider = resolve_provider(getattr(node, "provider", None), AgentKind.CLAUDE)
+        if provider_uses_kimi_anthropic_auth(provider):
+            return {
+                "node_id": node_id,
+                "agent": agent,
+                "trigger": "provider",
+            }
+
+    return None
+
+
 def _pipeline_kimi_smoke_preflight_matches(pipeline: object) -> list[dict[str, str]]:
     nodes = getattr(pipeline, "nodes", None) or []
     matches: list[dict[str, str]] = []
     for node in nodes:
         match = _node_kimi_smoke_preflight_match(node)
+        if match is not None:
+            matches.append(match)
+    return matches
+
+
+def _pipeline_auto_preflight_matches(pipeline: object) -> list[dict[str, str]]:
+    nodes = getattr(pipeline, "nodes", None) or []
+    matches: list[dict[str, str]] = []
+    for node in nodes:
+        match = _node_auto_preflight_match(node)
         if match is not None:
             matches.append(match)
     return matches
@@ -800,6 +843,10 @@ def _render_kimi_smoke_preflight_matches(matches: list[dict[str, str]]) -> list[
 
 def _pipeline_uses_kimi_smoke_preflight(pipeline: object) -> bool:
     return bool(_pipeline_kimi_smoke_preflight_matches(pipeline))
+
+
+def _pipeline_uses_auto_preflight(pipeline: object) -> bool:
+    return bool(_pipeline_auto_preflight_matches(pipeline))
 
 
 def _pipeline_kimi_shell_bootstrap_checks(pipeline: object) -> list[DoctorCheck]:
@@ -1105,11 +1152,13 @@ def _auto_smoke_preflight_reason(path: str, pipeline: object) -> str | None:
         return "path matches the bundled real-agent smoke pipeline."
     if _pipeline_uses_kimi_smoke_preflight(pipeline):
         return "local Codex/Claude/Kimi nodes use a `kimi` shell bootstrap."
+    if _pipeline_uses_auto_preflight(pipeline):
+        return "local Kimi-backed nodes require pipeline-specific readiness checks."
     return None
 
 
 def _auto_smoke_preflight_metadata(path: str, pipeline: object) -> dict[str, object]:
-    matches = _pipeline_kimi_smoke_preflight_matches(pipeline)
+    matches = _pipeline_auto_preflight_matches(pipeline)
     match_summary = _render_kimi_smoke_preflight_matches(matches)
     reason = _auto_smoke_preflight_reason(path, pipeline)
     if reason is not None:
@@ -1143,7 +1192,7 @@ def _should_run_smoke_preflight(
         return True
     if pipeline is None:
         return False
-    return _pipeline_uses_kimi_smoke_preflight(pipeline)
+    return _pipeline_uses_auto_preflight(pipeline)
 
 
 def _load_pipeline_with_optional_smoke_preflight(
