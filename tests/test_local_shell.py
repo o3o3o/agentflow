@@ -402,6 +402,20 @@ def test_target_bash_login_startup_warning_reports_unreadable_login_file(
     )
 
 
+def test_target_bash_login_startup_warning_ignores_undecodable_bytes_in_login_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".profile").write_bytes(b'\xff\xfeif [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi\n')
+    (home / ".bashrc").write_text("kimi(){ :; }\n", encoding="utf-8")
+    monkeypatch.setattr("agentflow.local_shell.Path.home", lambda: home)
+    target = {"kind": "local", "shell": "bash", "shell_login": True}
+
+    assert target_bash_login_startup_warning(target) is None
+
+
 def test_target_bash_login_startup_warning_reports_shadowed_profile_bridge(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -862,6 +876,24 @@ def test_shell_template_exports_env_var_before_command_detects_interactive_bash_
     assert (
         shell_template_exports_env_var_before_command(
             f"env HOME={home} bash {option} $HOME/auth.bashrc -ic '{{command}}'",
+            "ANTHROPIC_API_KEY",
+        )
+        is True
+    )
+
+
+@pytest.mark.parametrize("option", ["--rcfile", "--init-file"])
+def test_shell_template_exports_env_var_before_command_detects_nested_interactive_bash_rcfile(
+    tmp_path: Path,
+    option: str,
+):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "auth.bashrc").write_text("export ANTHROPIC_API_KEY=test-shell-key\n", encoding="utf-8")
+
+    assert (
+        shell_template_exports_env_var_before_command(
+            f"sh -c 'env HOME={home} bash {option} $HOME/auth.bashrc -ic \"{{command}}\"'",
             "ANTHROPIC_API_KEY",
         )
         is True
