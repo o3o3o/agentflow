@@ -480,6 +480,23 @@ def _shell_file_loads_function(
     return False
 
 
+def _bash_login_startup_file(home: Path) -> Path | None:
+    resolved_home = _resolved_home_path(home)
+    for filename in _BASH_LOGIN_FILENAMES:
+        candidate = resolved_home / filename
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def bash_login_shell_loads_function(function_name: str, *, home: Path | None = None) -> bool:
+    resolved_home = _resolved_home_path(home)
+    startup_file = _bash_login_startup_file(resolved_home)
+    if startup_file is None:
+        return False
+    return _shell_file_loads_function(startup_file, function_name, home=resolved_home)
+
+
 def _shell_command_loads_kimi_from_bash_env(command: str | None, *, home: Path | None = None) -> bool:
     resolved_home = _shell_command_effective_home_for_target(command, "bash", home=home)
     bash_env = _shell_command_prefix_env_value_for_target(command, "BASH_ENV", "bash")
@@ -1025,10 +1042,13 @@ def kimi_shell_init_requires_interactive_bash_warning(target: Any, *, home: Path
     shell_init = _target_value(target, "shell_init")
     shell = _target_value(target, "shell")
     effective_home = _shell_command_effective_home_for_target(shell if isinstance(shell, str) else None, "bash", home=home)
+    login_shell_loads_kimi = target_uses_login_bash(target) and bash_login_shell_loads_function("kimi", home=effective_home)
     if _shell_command_loads_kimi_from_bash_env(shell if isinstance(shell, str) else None, home=home):
         return None
     guarded_bashrc = bashrc_returns_early_for_noninteractive_shell(effective_home)
     if shell_init_uses_kimi_helper(shell_init):
+        if login_shell_loads_kimi:
+            return None
         if _shell_template_loads_kimi_from_sourced_file_before_command(
             shell if isinstance(shell, str) else None,
             home=effective_home,
@@ -1044,6 +1064,8 @@ def kimi_shell_init_requires_interactive_bash_warning(target: Any, *, home: Path
         return _kimi_bootstrap_without_interactive_bash_warning("target.shell_init")
 
     if shell_command_uses_kimi_helper(shell if isinstance(shell, str) else None):
+        if login_shell_loads_kimi:
+            return None
         if _shell_command_loads_kimi_from_sourced_file_before_kimi(shell, home=effective_home):
             return None
         if guarded_bashrc and shell_command_sources_bashrc_before_kimi(shell):

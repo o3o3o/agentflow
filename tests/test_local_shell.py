@@ -393,7 +393,7 @@ def test_kimi_shell_init_requires_interactive_bash_warning_rejects_relative_prof
     (home / ".profile").write_text("kimi(){ :; }\n", encoding="utf-8")
     target = {
         "kind": "local",
-        "shell": "bash -lc 'source .profile && kimi && {command}'",
+        "shell": "bash -c 'source .profile && kimi && {command}'",
     }
 
     assert kimi_shell_init_requires_interactive_bash_warning(target, home=home) == (
@@ -412,6 +412,22 @@ def test_kimi_shell_init_requires_interactive_bash_warning_accepts_shell_init_af
     target = {
         "kind": "local",
         "shell": "bash -lc 'source ~/.bash_profile && {command}'",
+        "shell_init": ["command -v kimi >/dev/null 2>&1", "kimi"],
+    }
+
+    assert kimi_shell_init_requires_interactive_bash_warning(target, home=home) is None
+
+
+def test_kimi_shell_init_requires_interactive_bash_warning_accepts_login_shell_startup_with_kimi(
+    tmp_path: Path,
+):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".profile").write_text("kimi(){ :; }\n", encoding="utf-8")
+    target = {
+        "kind": "local",
+        "shell": "bash",
+        "shell_login": True,
         "shell_init": ["command -v kimi >/dev/null 2>&1", "kimi"],
     }
 
