@@ -41,6 +41,7 @@ _BASH_INTERACTIVE_STDERR_NOISE = (
     "bash: initialize_job_control: no job control in background:",
     "bash: no job control in this shell",
 )
+_DEFAULT_DOCTOR_SUBPROCESS_TIMEOUT_SECONDS = 15.0
 _DIAGNOSTIC_TOKEN_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
 _ENV_ASSIGNMENT_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 _SHELL_COMMAND_BOUNDARY_TOKENS = {"&&", "||", "|", ";", "do", "then", "elif"}
@@ -242,25 +243,79 @@ def _first_nonempty_output_line(*streams: str | None) -> str | None:
     return None
 
 
-def _probe_executable_version(path: str) -> str | None:
+class _DoctorSubprocessTimeout(RuntimeError):
+    def __init__(self, command_text: str, timeout_seconds: float):
+        super().__init__(command_text)
+        self.command_text = command_text
+        self.timeout_seconds = timeout_seconds
+
+
+def _doctor_subprocess_timeout_seconds() -> float:
+    raw_value = os.getenv("AGENTFLOW_DOCTOR_TIMEOUT_SECONDS")
+    if raw_value is None:
+        return _DEFAULT_DOCTOR_SUBPROCESS_TIMEOUT_SECONDS
     try:
-        result = subprocess.run(
+        parsed = float(raw_value)
+    except ValueError:
+        return _DEFAULT_DOCTOR_SUBPROCESS_TIMEOUT_SECONDS
+    if parsed <= 0:
+        return _DEFAULT_DOCTOR_SUBPROCESS_TIMEOUT_SECONDS
+    return parsed
+
+
+def _format_timeout_seconds(value: float) -> str:
+    if float(value).is_integer():
+        return f"{int(value)}s"
+    return f"{value:g}s"
+
+
+def _doctor_timeout_detail(command_text: str, timeout_seconds: float | None = None) -> str:
+    resolved_timeout = timeout_seconds or _doctor_subprocess_timeout_seconds()
+    return f"`{command_text}` timed out after {_format_timeout_seconds(resolved_timeout)}"
+
+
+def _doctor_command_text(command: list[str]) -> str:
+    if len(command) == 3 and command[0] == "bash" and command[1].startswith("-") and "c" in command[1]:
+        return f"bash {command[1]} '<inline shell probe>'"
+    return shlex.join(command)
+
+
+def _run_doctor_subprocess(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    timeout_seconds = _doctor_subprocess_timeout_seconds()
+    try:
+        return subprocess.run(command, timeout=timeout_seconds, **kwargs)
+    except subprocess.TimeoutExpired as exc:
+        raise _DoctorSubprocessTimeout(_doctor_command_text(command), timeout_seconds) from exc
+
+
+def _probe_executable_version(path: str) -> tuple[str | None, float | None]:
+    try:
+        result = _run_doctor_subprocess(
             [path, "--version"],
             check=False,
             capture_output=True,
             text=True,
         )
     except OSError:
-        return None
+        return None, None
+    except _DoctorSubprocessTimeout as exc:
+        return None, exc.timeout_seconds
 
     if result.returncode != 0:
-        return None
+        return None, None
 
-    return _first_nonempty_output_line(result.stdout, result.stderr)
+    return _first_nonempty_output_line(result.stdout, result.stderr), None
 
 
 def _executable_ok_check(name: str, path: str) -> DoctorCheck:
-    version = _probe_executable_version(path)
+    version, timeout_seconds = _probe_executable_version(path)
+    if timeout_seconds is not None:
+        return DoctorCheck(
+            name=name,
+            status="warning",
+            detail=f"Found `{name}` at `{path}`, but {_doctor_timeout_detail(f'{name} --version', timeout_seconds)}.",
+            context={"path": path, "version_timeout_seconds": timeout_seconds},
+        )
     if not version:
         return DoctorCheck(name=name, status="ok", detail=f"Found `{name}` at `{path}`.")
     return DoctorCheck(
@@ -360,6 +415,13 @@ def _local_kimi_ready_check_detail(node_id: str, probe_command: str) -> str:
     return (
         f"Node `{node_id}` (kimi) cannot launch the local Kimi bridge after the node shell bootstrap; "
         f"`{probe_command}` fails in the prepared local shell."
+    )
+
+
+def _local_probe_timeout_detail(node_id: str, agent: str, command_text: str, timeout_seconds: float) -> str:
+    return (
+        f"Node `{node_id}` ({agent}) cannot finish the local preflight probe after the node shell bootstrap; "
+        f"{_doctor_timeout_detail(command_text, timeout_seconds)} in the prepared local shell."
     )
 
 
@@ -538,14 +600,14 @@ def _prepared_kimi_readiness_execution(
     return prepared, paths, shlex.join(probe_command)
 
 
-def _can_authenticate_local_codex(node: object, pipeline: object | None = None) -> bool:
+def _can_authenticate_local_codex(node: object, pipeline: object | None = None) -> tuple[bool, str | None]:
     prepared_with_paths = _prepared_codex_auth_execution(node, pipeline)
     if prepared_with_paths is None:
-        return True
+        return True, None
 
     prepared, paths = prepared_with_paths
     if _has_nonempty_env_value(prepared.env, "OPENAI_API_KEY") or bool(str(os.getenv("OPENAI_API_KEY", "")).strip()):
-        return True
+        return True, None
 
     try:
         launch_plan = LocalRunner().plan_execution(
@@ -554,12 +616,12 @@ def _can_authenticate_local_codex(node: object, pipeline: object | None = None) 
             paths,
         )
     except Exception:
-        return False
+        return False, None
 
     env = os.environ.copy()
     env.update(launch_plan.env)
     try:
-        result = subprocess.run(
+        result = _run_doctor_subprocess(
             launch_plan.command,
             check=False,
             capture_output=True,
@@ -568,14 +630,21 @@ def _can_authenticate_local_codex(node: object, pipeline: object | None = None) 
             text=True,
         )
     except OSError:
-        return False
-    return result.returncode == 0
+        return False, None
+    except _DoctorSubprocessTimeout as exc:
+        return False, _local_probe_timeout_detail(
+            str(_object_value(node, "id", "codex")),
+            AgentKind.CODEX.value,
+            exc.command_text,
+            exc.timeout_seconds,
+        )
+    return result.returncode == 0, None
 
 
-def _can_launch_local_codex(node: object, pipeline: object | None = None) -> tuple[bool, str | None]:
+def _can_launch_local_codex(node: object, pipeline: object | None = None) -> tuple[bool, str | None, str | None]:
     prepared_with_paths = _prepared_codex_readiness_execution(node, pipeline)
     if prepared_with_paths is None:
-        return True, None
+        return True, None, None
 
     prepared, paths, executable = prepared_with_paths
 
@@ -586,12 +655,12 @@ def _can_launch_local_codex(node: object, pipeline: object | None = None) -> tup
             paths,
         )
     except Exception:
-        return False, executable
+        return False, executable, None
 
     env = os.environ.copy()
     env.update(launch_plan.env)
     try:
-        result = subprocess.run(
+        result = _run_doctor_subprocess(
             launch_plan.command,
             check=False,
             capture_output=True,
@@ -600,14 +669,21 @@ def _can_launch_local_codex(node: object, pipeline: object | None = None) -> tup
             text=True,
         )
     except OSError:
-        return False, executable
-    return result.returncode == 0, executable
+        return False, executable, None
+    except _DoctorSubprocessTimeout as exc:
+        return False, executable, _local_probe_timeout_detail(
+            str(_object_value(node, "id", "codex")),
+            AgentKind.CODEX.value,
+            exc.command_text,
+            exc.timeout_seconds,
+        )
+    return result.returncode == 0, executable, None
 
 
-def _can_launch_local_claude(node: object, pipeline: object | None = None) -> tuple[bool, str | None]:
+def _can_launch_local_claude(node: object, pipeline: object | None = None) -> tuple[bool, str | None, str | None]:
     prepared_with_paths = _prepared_claude_readiness_execution(node, pipeline)
     if prepared_with_paths is None:
-        return True, None
+        return True, None, None
 
     prepared, paths, executable = prepared_with_paths
 
@@ -618,12 +694,12 @@ def _can_launch_local_claude(node: object, pipeline: object | None = None) -> tu
             paths,
         )
     except Exception:
-        return False, executable
+        return False, executable, None
 
     env = os.environ.copy()
     env.update(launch_plan.env)
     try:
-        result = subprocess.run(
+        result = _run_doctor_subprocess(
             launch_plan.command,
             check=False,
             capture_output=True,
@@ -632,14 +708,21 @@ def _can_launch_local_claude(node: object, pipeline: object | None = None) -> tu
             text=True,
         )
     except OSError:
-        return False, executable
-    return result.returncode == 0, executable
+        return False, executable, None
+    except _DoctorSubprocessTimeout as exc:
+        return False, executable, _local_probe_timeout_detail(
+            str(_object_value(node, "id", "claude")),
+            AgentKind.CLAUDE.value,
+            exc.command_text,
+            exc.timeout_seconds,
+        )
+    return result.returncode == 0, executable, None
 
 
-def _can_launch_local_kimi(node: object, pipeline: object | None = None) -> tuple[bool, str | None]:
+def _can_launch_local_kimi(node: object, pipeline: object | None = None) -> tuple[bool, str | None, str | None]:
     prepared_with_paths = _prepared_kimi_readiness_execution(node, pipeline)
     if prepared_with_paths is None:
-        return True, None
+        return True, None, None
 
     prepared, paths, probe_command = prepared_with_paths
 
@@ -650,12 +733,12 @@ def _can_launch_local_kimi(node: object, pipeline: object | None = None) -> tupl
             paths,
         )
     except Exception:
-        return False, probe_command
+        return False, probe_command, None
 
     env = os.environ.copy()
     env.update(launch_plan.env)
     try:
-        result = subprocess.run(
+        result = _run_doctor_subprocess(
             launch_plan.command,
             check=False,
             capture_output=True,
@@ -664,8 +747,15 @@ def _can_launch_local_kimi(node: object, pipeline: object | None = None) -> tupl
             text=True,
         )
     except OSError:
-        return False, probe_command
-    return result.returncode == 0, probe_command
+        return False, probe_command, None
+    except _DoctorSubprocessTimeout as exc:
+        return False, probe_command, _local_probe_timeout_detail(
+            str(_object_value(node, "id", "kimi")),
+            AgentKind.KIMI.value,
+            exc.command_text,
+            exc.timeout_seconds,
+        )
+    return result.returncode == 0, probe_command, None
 
 
 def build_pipeline_local_claude_readiness_checks(pipeline: object) -> list[DoctorCheck]:
@@ -675,7 +765,7 @@ def build_pipeline_local_claude_readiness_checks(pipeline: object) -> list[Docto
         if agent != AgentKind.CLAUDE.value:
             continue
 
-        ready, executable = _can_launch_local_claude(node, pipeline)
+        ready, executable, failure_detail = _can_launch_local_claude(node, pipeline)
         if ready:
             continue
 
@@ -684,7 +774,7 @@ def build_pipeline_local_claude_readiness_checks(pipeline: object) -> list[Docto
             DoctorCheck(
                 name="claude_ready",
                 status="failed",
-                detail=_local_claude_ready_check_detail(node_id, executable or "claude"),
+                detail=failure_detail or _local_claude_ready_check_detail(node_id, executable or "claude"),
             )
         )
     return checks
@@ -697,7 +787,7 @@ def build_pipeline_local_kimi_readiness_checks(pipeline: object) -> list[DoctorC
         if agent != AgentKind.KIMI.value:
             continue
 
-        ready, probe_command = _can_launch_local_kimi(node, pipeline)
+        ready, probe_command, failure_detail = _can_launch_local_kimi(node, pipeline)
         if ready:
             continue
 
@@ -706,7 +796,8 @@ def build_pipeline_local_kimi_readiness_checks(pipeline: object) -> list[DoctorC
             DoctorCheck(
                 name="kimi_ready",
                 status="failed",
-                detail=_local_kimi_ready_check_detail(node_id, probe_command or "python -c 'import agentflow.remote.kimi_bridge'"),
+                detail=failure_detail
+                or _local_kimi_ready_check_detail(node_id, probe_command or "python -c 'import agentflow.remote.kimi_bridge'"),
             )
         )
     return checks
@@ -719,7 +810,7 @@ def build_pipeline_local_codex_readiness_checks(pipeline: object) -> list[Doctor
         if agent != AgentKind.CODEX.value:
             continue
 
-        ready, executable = _can_launch_local_codex(node, pipeline)
+        ready, executable, failure_detail = _can_launch_local_codex(node, pipeline)
         if ready:
             continue
 
@@ -728,7 +819,7 @@ def build_pipeline_local_codex_readiness_checks(pipeline: object) -> list[Doctor
             DoctorCheck(
                 name="codex_ready",
                 status="failed",
-                detail=_local_codex_ready_check_detail(node_id, executable or "codex"),
+                detail=failure_detail or _local_codex_ready_check_detail(node_id, executable or "codex"),
             )
         )
     return checks
@@ -745,11 +836,12 @@ def build_pipeline_local_codex_auth_checks(pipeline: object) -> list[DoctorCheck
         if target is None:
             continue
 
-        ready, _ = _can_launch_local_codex(node, pipeline)
+        ready, _, _ = _can_launch_local_codex(node, pipeline)
         if not ready:
             continue
 
-        if _can_authenticate_local_codex(node, pipeline):
+        authenticated, failure_detail = _can_authenticate_local_codex(node, pipeline)
+        if authenticated:
             continue
 
         node_id = str(_object_value(node, "id", "codex"))
@@ -757,7 +849,7 @@ def build_pipeline_local_codex_auth_checks(pipeline: object) -> list[DoctorCheck
             DoctorCheck(
                 name="codex_auth",
                 status="failed",
-                detail=_local_codex_auth_check_detail(node_id),
+                detail=failure_detail or _local_codex_auth_check_detail(node_id),
             )
         )
     return checks
@@ -779,7 +871,7 @@ def _check_codex_executable(home: Path | None = None) -> DoctorCheck:
     if home is not None:
         env["HOME"] = str(home)
     try:
-        result = subprocess.run(
+        result = _run_doctor_subprocess(
             ["bash", "-lic", f"type {shlex.quote('codex')} >/dev/null 2>&1 || exit {_CODEX_IN_SHELL_MISSING_EXIT_CODE}"],
             check=False,
             capture_output=True,
@@ -791,6 +883,12 @@ def _check_codex_executable(home: Path | None = None) -> DoctorCheck:
             name="codex",
             status="failed",
             detail=f"`codex` is not on PATH, and AgentFlow could not launch `bash -lic` to look for it: {exc}",
+        )
+    except _DoctorSubprocessTimeout as exc:
+        return DoctorCheck(
+            name="codex",
+            status="failed",
+            detail=f"`codex` is not on PATH, and {_doctor_timeout_detail(exc.command_text, exc.timeout_seconds)} while looking for it.",
         )
 
     if result.returncode == 0:
@@ -825,7 +923,7 @@ def _check_claude_executable(home: Path | None = None) -> DoctorCheck:
     if home is not None:
         env["HOME"] = str(home)
     try:
-        result = subprocess.run(
+        result = _run_doctor_subprocess(
             ["bash", "-lic", f"type {shlex.quote('claude')} >/dev/null 2>&1 || exit {_CLAUDE_IN_SHELL_MISSING_EXIT_CODE}"],
             check=False,
             capture_output=True,
@@ -837,6 +935,12 @@ def _check_claude_executable(home: Path | None = None) -> DoctorCheck:
             name="claude",
             status="failed",
             detail=f"`claude` is not on PATH, and AgentFlow could not launch `bash -lic` to look for it: {exc}",
+        )
+    except _DoctorSubprocessTimeout as exc:
+        return DoctorCheck(
+            name="claude",
+            status="failed",
+            detail=f"`claude` is not on PATH, and {_doctor_timeout_detail(exc.command_text, exc.timeout_seconds)} while looking for it.",
         )
 
     if result.returncode == 0:
@@ -1149,7 +1253,7 @@ def _check_kimi_shell_helper(home: Path | None = None) -> DoctorCheck:
         ]
     )
     try:
-        result = subprocess.run(
+        result = _run_doctor_subprocess(
             ["bash", "-lic", script],
             check=False,
             capture_output=True,
@@ -1161,6 +1265,15 @@ def _check_kimi_shell_helper(home: Path | None = None) -> DoctorCheck:
             name="kimi_shell_helper",
             status="failed",
             detail=f"Could not launch `bash -lic` to verify `kimi`, `claude`, and `codex`: {exc}",
+        )
+    except _DoctorSubprocessTimeout as exc:
+        return DoctorCheck(
+            name="kimi_shell_helper",
+            status="failed",
+            detail=(
+                f"`kimi` verification in `bash -lic` did not finish: "
+                f"{_doctor_timeout_detail(exc.command_text, exc.timeout_seconds)}."
+            ),
         )
     if result.returncode == 0:
         return DoctorCheck(
@@ -1284,7 +1397,7 @@ def _check_kimi_bootstrap_helper(home: Path | None = None) -> DoctorCheck:
         ]
     )
     try:
-        result = subprocess.run(
+        result = _run_doctor_subprocess(
             ["bash", "-lic", script],
             check=False,
             capture_output=True,
@@ -1296,6 +1409,15 @@ def _check_kimi_bootstrap_helper(home: Path | None = None) -> DoctorCheck:
             name="kimi_shell_helper",
             status="failed",
             detail=f"Could not launch `bash -lic` to verify `kimi`: {exc}",
+        )
+    except _DoctorSubprocessTimeout as exc:
+        return DoctorCheck(
+            name="kimi_shell_helper",
+            status="failed",
+            detail=(
+                f"`kimi` bootstrap verification in `bash -lic` did not finish: "
+                f"{_doctor_timeout_detail(exc.command_text, exc.timeout_seconds)}."
+            ),
         )
     if result.returncode == 0:
         return DoctorCheck(

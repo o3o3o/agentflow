@@ -9,12 +9,15 @@ from agentflow.doctor import (
     DoctorCheck,
     _check_claude_executable,
     _check_bash_login_startup,
+    _check_kimi_shell_helper,
     _prepared_kimi_readiness_execution,
     _should_probe_local_claude,
     build_bash_login_shell_bridge_recommendation,
     build_local_smoke_doctor_report,
+    build_pipeline_local_claude_readiness_checks,
     build_pipeline_local_codex_auth_checks,
     build_pipeline_local_codex_readiness_checks,
+    build_pipeline_local_kimi_readiness_checks,
 )
 from agentflow.prepared import ExecutionPaths
 from agentflow.specs import ProviderConfig
@@ -243,6 +246,177 @@ def test_local_smoke_doctor_report_includes_host_cli_versions(tmp_path: Path, mo
         "detail": "Found `claude` at `/tmp/claude` (version `2.1.52 (Claude Code)`).",
         "context": {"path": "/tmp/claude", "version": "2.1.52 (Claude Code)"},
     }
+
+
+def test_check_claude_executable_warns_when_version_probe_times_out(monkeypatch):
+    monkeypatch.setattr("agentflow.doctor.shutil.which", lambda name: "/tmp/claude")
+
+    def fake_run(*args, **kwargs):
+        command = args[0]
+        if command == ["/tmp/claude", "--version"]:
+            raise subprocess.TimeoutExpired(cmd=command, timeout=15)
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr("agentflow.doctor.subprocess.run", fake_run)
+
+    check = _check_claude_executable()
+
+    assert check.as_dict() == {
+        "name": "claude",
+        "status": "warning",
+        "detail": "Found `claude` at `/tmp/claude`, but `claude --version` timed out after 15s.",
+        "context": {"path": "/tmp/claude", "version_timeout_seconds": 15.0},
+    }
+
+
+def test_check_kimi_shell_helper_fails_when_probe_times_out(monkeypatch):
+    def fake_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=args[0], timeout=15)
+
+    monkeypatch.setattr("agentflow.doctor.subprocess.run", fake_run)
+
+    check = _check_kimi_shell_helper()
+
+    assert check.as_dict() == {
+        "name": "kimi_shell_helper",
+        "status": "failed",
+        "detail": "`kimi` verification in `bash -lic` did not finish: `bash -lic '<inline shell probe>'` timed out after 15s.",
+    }
+
+
+def test_pipeline_local_claude_readiness_check_reports_timeout(monkeypatch):
+    pipeline = SimpleNamespace(
+        nodes=[
+            SimpleNamespace(
+                id="claude_review",
+                agent=SimpleNamespace(value="claude"),
+                provider=None,
+                env={},
+                target=SimpleNamespace(
+                    kind="local",
+                    shell="bash",
+                    shell_login=True,
+                    shell_interactive=True,
+                    shell_init="kimi",
+                    cwd=None,
+                ),
+            )
+        ],
+        working_path=Path.cwd(),
+    )
+
+    def fake_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=args[0], timeout=15)
+
+    monkeypatch.setattr("agentflow.doctor.subprocess.run", fake_run)
+
+    checks = build_pipeline_local_claude_readiness_checks(pipeline)
+
+    assert [check.as_dict() for check in checks] == [
+        {
+                "name": "claude_ready",
+                "status": "failed",
+                "detail": (
+                    "Node `claude_review` (claude) cannot finish the local preflight probe after the node shell bootstrap; "
+                    "`bash -l -i -c 'kimi && eval \"$AGENTFLOW_TARGET_COMMAND\"'` timed out after 15s "
+                    "in the prepared local shell."
+                ),
+            }
+        ]
+
+
+def test_pipeline_local_codex_auth_check_reports_timeout(monkeypatch):
+    pipeline = SimpleNamespace(
+        nodes=[
+            SimpleNamespace(
+                id="codex_plan",
+                agent=SimpleNamespace(value="codex"),
+                provider=None,
+                env={},
+                executable="custom-codex",
+                target=SimpleNamespace(
+                    kind="local",
+                    shell="bash",
+                    shell_login=True,
+                    shell_interactive=True,
+                    shell_init="kimi",
+                    cwd=None,
+                ),
+            )
+        ],
+        working_path=Path.cwd(),
+    )
+    commands: list[list[str]] = []
+
+    def fake_run(*args, **kwargs):
+        command = list(args[0])
+        commands.append(command)
+        target_command = (kwargs.get("env") or {}).get("AGENTFLOW_TARGET_COMMAND", "")
+        if "custom-codex --version" in target_command:
+            return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+        if "custom-codex login status" in target_command:
+            raise subprocess.TimeoutExpired(cmd=command, timeout=15)
+        raise AssertionError(f"unexpected target command: {target_command}")
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr("agentflow.doctor.subprocess.run", fake_run)
+
+    checks = build_pipeline_local_codex_auth_checks(pipeline)
+
+    assert [check.as_dict() for check in checks] == [
+        {
+                "name": "codex_auth",
+                "status": "failed",
+                "detail": (
+                    "Node `codex_plan` (codex) cannot finish the local preflight probe after the node shell bootstrap; "
+                    "`bash -l -i -c 'kimi && eval \"$AGENTFLOW_TARGET_COMMAND\"'` timed out after 15s "
+                    "in the prepared local shell."
+                ),
+            }
+        ]
+    assert len(commands) == 2
+
+
+def test_pipeline_local_kimi_readiness_check_reports_timeout(monkeypatch):
+    pipeline = SimpleNamespace(
+        nodes=[
+            SimpleNamespace(
+                id="kimi_review",
+                agent=SimpleNamespace(value="kimi"),
+                provider=None,
+                env={},
+                executable="python-kimi",
+                target=SimpleNamespace(
+                    kind="local",
+                    shell="bash",
+                    shell_login=True,
+                    shell_interactive=True,
+                    shell_init="kimi",
+                    cwd=None,
+                ),
+            )
+        ],
+        working_path=Path.cwd(),
+    )
+
+    def fake_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=args[0], timeout=15)
+
+    monkeypatch.setattr("agentflow.doctor.subprocess.run", fake_run)
+
+    checks = build_pipeline_local_kimi_readiness_checks(pipeline)
+
+    assert [check.as_dict() for check in checks] == [
+        {
+                "name": "kimi_ready",
+                "status": "failed",
+                "detail": (
+                    "Node `kimi_review` (kimi) cannot finish the local preflight probe after the node shell bootstrap; "
+                    "`bash -l -i -c 'kimi && eval \"$AGENTFLOW_TARGET_COMMAND\"'` timed out after 15s "
+                    "in the prepared local shell."
+                ),
+            }
+        ]
 
 
 def test_check_claude_executable_warns_when_login_shell_provides_claude(tmp_path: Path, monkeypatch):
