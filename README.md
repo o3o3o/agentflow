@@ -132,6 +132,7 @@ make doctor-local-custom
 ```
 
 That helper writes the same temporary pipeline outside this repo, runs `agentflow doctor --output summary`, and validates that the external pipeline still reports the expected bash startup, Kimi helper, Codex readiness/auth, and launch-env override details before any run starts.
+Use `make doctor-local-custom-shell-init` when you want the same external verification against the explicit `shell: bash`, `shell_login: true`, `shell_interactive: true`, `shell_init: kimi` form instead of `local_target_defaults.bootstrap: kimi`.
 
 When you want to verify the pre-launch inspection path for that same kind of external Codex + Claude-on-Kimi pipeline, run:
 
@@ -140,6 +141,7 @@ make inspect-local-custom
 ```
 
 That helper writes the same temporary pipeline outside this repo, runs `agentflow inspect --output summary`, and validates that the reported working directory, per-node `Cwd`, Kimi bootstrap wiring, and prepared Codex/Claude launch summaries all resolve against the external pipeline path.
+Use `make inspect-local-custom-shell-init` when you want the same contract verified for the explicit `shell_init: kimi` wiring instead of the preset bootstrap shorthand.
 
 When you want to exercise the main `agentflow run` path against that same kind of external Codex + Claude-on-Kimi pipeline, run:
 
@@ -148,6 +150,7 @@ make run-local-custom
 ```
 
 That helper also writes the same temporary pipeline outside this repo, but it runs `agentflow run --output json-summary --show-preflight` and validates the wrapper contract: run JSON stays on stdout, the successful preflight summary stays on stderr, and both local agent nodes complete with the expected previews. If the live run fails, it now prints the captured stdout/stderr and keeps the temp directory path for debugging.
+Use `make run-local-custom-shell-init` when you want the same stdout/stderr contract exercised for the explicit `shell_init: kimi` form too.
 
 When you want the full maintainer smoke sequence in one command, run:
 
@@ -155,7 +158,7 @@ When you want the full maintainer smoke sequence in one command, run:
 make verify-local
 ```
 
-That wrapper runs the local bash/Kimi toolchain check, the external custom-pipeline `doctor` path, the external custom-pipeline `inspect` path, the bundled `agentflow check-local` flow, the external custom-pipeline `check-local` path, and the external custom-pipeline `run` path in sequence. It now also prints whether `~/.bash_profile`, `~/.bash_login`, or `~/.profile` is supplying the bash login startup path before it verifies `kimi`, `codex`, and `claude`.
+That wrapper runs the local bash/Kimi toolchain check, the external custom-pipeline `doctor` and `inspect` paths for both `bootstrap: kimi` and explicit `shell_init: kimi`, the bundled `agentflow check-local` flow, the external custom-pipeline `check-local` path for both bootstrap styles, and the external custom-pipeline `run` path for both bootstrap styles. It now also prints whether `~/.bash_profile`, `~/.bash_login`, or `~/.profile` is supplying the bash login startup path before it verifies `kimi`, `codex`, and `claude`.
 
 By default, `agentflow smoke` now prints a compact per-node summary instead of the full run record JSON. Use `agentflow smoke --output json-summary` when you want a compact machine-readable payload for scripts, or `agentflow smoke --output json` when you want the complete persisted run record with stdout, stderr, and trace details.
 Add `--show-preflight` when you want `smoke` to print the successful local readiness summary before the run starts. AgentFlow writes that extra summary to stderr so JSON stdout stays safe for wrappers and scripts, and it now includes the auto-preflight reason plus matched node bootstrap sources when available.
