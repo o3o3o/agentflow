@@ -223,6 +223,38 @@ def test_pipeline_validation_expands_kimi_bootstrap_shorthand():
     assert pipeline.nodes[1].target.shell_init == ["command -v kimi >/dev/null 2>&1", "kimi"]
 
 
+def test_pipeline_validation_merges_extra_shell_init_into_kimi_bootstrap_shorthand():
+    pipeline = PipelineSpec.model_validate(
+        {
+            "name": "local-bootstrap-shell-init-merge",
+            "working_dir": ".",
+            "local_target_defaults": {
+                "bootstrap": "kimi",
+            },
+            "nodes": [
+                {
+                    "id": "review",
+                    "agent": "claude",
+                    "prompt": "review",
+                    "target": {
+                        "shell_init": ["export EXTRA_FLAG=1"],
+                    },
+                }
+            ],
+        }
+    )
+
+    assert pipeline.nodes[0].target.bootstrap == "kimi"
+    assert pipeline.nodes[0].target.shell == "bash"
+    assert pipeline.nodes[0].target.shell_login is True
+    assert pipeline.nodes[0].target.shell_interactive is True
+    assert pipeline.nodes[0].target.shell_init == [
+        "export EXTRA_FLAG=1",
+        "command -v kimi >/dev/null 2>&1",
+        "kimi",
+    ]
+
+
 def test_pipeline_validation_rejects_unknown_local_bootstrap():
     with pytest.raises(ValidationError, match=r"target\.bootstrap.*must be `kimi`"):
         PipelineSpec.model_validate(

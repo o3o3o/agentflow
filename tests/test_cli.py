@@ -588,6 +588,56 @@ nodes:
     ]
 
 
+def test_inspect_command_merges_extra_shell_init_with_kimi_bootstrap_shorthand(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".profile").write_text('if [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi\n', encoding="utf-8")
+    monkeypatch.setattr("agentflow.local_shell.Path.home", lambda: home)
+
+    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path.write_text(
+        """name: inspect-bootstrap-shell-init-merge
+working_dir: .
+nodes:
+  - id: review
+    agent: claude
+    provider: kimi
+    prompt: hi
+    target:
+      kind: local
+      bootstrap: kimi
+      shell_init:
+        - export EXTRA_FLAG=1
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "super-secret")
+    monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
+
+    result = runner.invoke(app, ["inspect", str(pipeline_path), "--node", "review", "--output", "json-summary"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["pipeline"]["auto_preflight_matches"] == ["review (claude) via `target.bootstrap`"]
+    assert payload["nodes"] == [
+        {
+            "id": "review",
+            "agent": "claude",
+            "target": "local",
+            "tools": "read_only",
+            "capture": "final",
+            "provider": "kimi, key=ANTHROPIC_API_KEY, url=https://api.kimi.com/coding/",
+            "auth": "`ANTHROPIC_API_KEY` via `target.bootstrap` (`kimi` helper)",
+            "bootstrap": "preset=kimi, shell=bash, login=true, startup=~/.profile, interactive=true, init=export EXTRA_FLAG=1 && command -v kimi >/dev/null 2>&1 && kimi",
+            "prompt_preview": "hi",
+            "prepared_command": "claude -p hi --output-format stream-json --verbose --permission-mode bypassPermissions --tools Read,Glob,Grep,LS,NotebookRead,Task,TaskOutput,TodoRead,WebFetch,WebSearch",
+            "launch": "bash -l -i -c 'export EXTRA_FLAG=1 && command -v kimi >/dev/null 2>&1 && kimi && eval \"$AGENTFLOW_TARGET_COMMAND\"'",
+            "cwd": str(tmp_path.resolve()),
+            "env_keys": ["AGENTFLOW_TARGET_COMMAND", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"],
+        }
+    ]
+
+
 def test_inspect_command_summary_warns_when_launch_env_overrides_current_base_url(tmp_path, monkeypatch):
     pipeline_path = tmp_path / "pipeline.yaml"
     pipeline_path.write_text(

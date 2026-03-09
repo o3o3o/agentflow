@@ -8,7 +8,12 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from agentflow.local_shell import invalid_bash_long_option_error, shell_wrapper_requires_command_placeholder
+from agentflow.local_shell import (
+    invalid_bash_long_option_error,
+    shell_init_commands,
+    shell_init_uses_kimi_helper,
+    shell_wrapper_requires_command_placeholder,
+)
 
 
 class AgentKind(StrEnum):
@@ -80,6 +85,23 @@ def _local_bootstrap_defaults(bootstrap: str) -> dict[str, Any]:
             "shell_init": list(_LOCAL_KIMI_BOOTSTRAP_SHELL_INIT),
         }
     return {}
+
+
+def _merge_bootstrap_shell_init(bootstrap: str, shell_init: Any) -> str | list[str] | None:
+    defaults = _local_bootstrap_defaults(bootstrap)
+    default_shell_init = defaults.get("shell_init")
+    if default_shell_init is None:
+        return shell_init
+    if shell_init is None:
+        return default_shell_init
+    if bootstrap == "kimi" and shell_init_uses_kimi_helper(shell_init):
+        return shell_init
+
+    extra_commands = list(shell_init_commands(shell_init))
+    if not extra_commands:
+        return default_shell_init
+
+    return [*extra_commands, *shell_init_commands(default_shell_init)]
 
 
 def _normalized_provider_base_url(value: str | None) -> str | None:
@@ -243,6 +265,9 @@ class LocalTarget(BaseModel):
 
         updated = dict(data)
         for key, value in _local_bootstrap_defaults(bootstrap).items():
+            if key == "shell_init":
+                updated[key] = _merge_bootstrap_shell_init(bootstrap, updated.get(key))
+                continue
             if key not in updated or updated[key] is None:
                 updated[key] = value
         return updated
