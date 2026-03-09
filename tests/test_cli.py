@@ -4607,6 +4607,54 @@ def test_check_local_uses_bundled_pipeline_by_default(monkeypatch):
     assert captured["wait_timeout"] is None
 
 
+def test_check_local_accepts_wrapper_preflight_flags_for_cli_parity(monkeypatch):
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(agentflow.cli, "_stream_supports_tty_summary", lambda *, err: True)
+
+    class FakeOrchestrator:
+        async def submit(self, pipeline: object):
+            captured["submitted_pipeline"] = pipeline
+            return SimpleNamespace(id="check-local-wrapper-flags")
+
+        async def wait(self, run_id: str, timeout: float | None = None):
+            captured["wait_run_id"] = run_id
+            return _completed_run(run_id, pipeline_name="local-real-agents-kimi-smoke")
+
+    monkeypatch.setattr(agentflow.cli, "build_local_smoke_doctor_report", lambda: _doctor_report())
+    monkeypatch.setattr(
+        agentflow.cli,
+        "_build_runtime",
+        lambda runs_dir, max_concurrent_runs: (
+            SimpleNamespace(run_dir=lambda run_id: Path(runs_dir) / run_id),
+            FakeOrchestrator(),
+        ),
+    )
+    monkeypatch.setattr(agentflow.cli, "default_smoke_pipeline_path", lambda: "examples/local-real-agents-kimi-smoke.yaml")
+    fake_pipeline = SimpleNamespace(nodes=[])
+    monkeypatch.setattr(agentflow.cli, "_load_pipeline", lambda path: fake_pipeline)
+
+    result = runner.invoke(app, ["check-local", "--preflight", "auto", "--show-preflight"])
+
+    assert result.exit_code == 0
+    assert "Doctor: ok" in result.stderr
+    assert "Pipeline auto preflight: enabled - path matches the bundled real-agent smoke pipeline." in result.stderr
+    assert "Run check-local-wrapper-flags: completed" in result.stdout
+    assert captured["submitted_pipeline"] is fake_pipeline
+    assert captured["wait_run_id"] == "check-local-wrapper-flags"
+
+
+def test_check_local_rejects_preflight_never(monkeypatch):
+    monkeypatch.setattr(
+        agentflow.cli,
+        "_doctor_report_for_path",
+        lambda path: (_ for _ in ()).throw(AssertionError("doctor should not run when `--preflight never` is rejected")),
+    )
+
+    result = runner.invoke(app, ["check-local", "--preflight", "never"])
+
+    assert result.exit_code == 2
+
+
 def test_check_local_reuses_preflight_loaded_pipeline(monkeypatch):
     captured: dict[str, object] = {}
     monkeypatch.setattr(agentflow.cli, "_stream_supports_tty_summary", lambda *, err: True)

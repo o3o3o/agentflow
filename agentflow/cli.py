@@ -1454,18 +1454,24 @@ def _render_doctor_summary(
             f"- {getattr(check, 'name', 'unknown')}: {_status_value(getattr(check, 'status', 'unknown'))}"
             f" - {getattr(check, 'detail', '')}{_doctor_check_summary_suffix(check)}"
         )
+    auto_preflight_scope = ""
+    if isinstance(pipeline, dict):
+        auto_preflight_scope = str(pipeline.get("auto_preflight_scope") or "").strip().lower()
+    auto_preflight_label = "Pipeline auto preflight"
+    if auto_preflight_scope == "run/smoke":
+        auto_preflight_label = "Pipeline run/smoke auto preflight"
     raw_auto_preflight = pipeline.get("auto_preflight") if isinstance(pipeline, dict) else None
     if isinstance(raw_auto_preflight, dict):
         enabled = raw_auto_preflight.get("enabled")
         reason = raw_auto_preflight.get("reason")
         if isinstance(reason, str) and reason:
             status = "enabled" if enabled else "disabled"
-            lines.append(f"Pipeline auto preflight: {status} - {reason}")
+            lines.append(f"{auto_preflight_label}: {status} - {reason}")
         matches = raw_auto_preflight.get("match_summary")
         if isinstance(matches, list):
             rendered_matches = [match for match in matches if isinstance(match, str) and match]
             if rendered_matches:
-                lines.append(f"Pipeline auto preflight matches: {', '.join(rendered_matches)}")
+                lines.append(f"{auto_preflight_label} matches: {', '.join(rendered_matches)}")
     if include_shell_bridge:
         lines.append(_render_shell_bridge_summary(shell_bridge))
     return "\n".join(lines)
@@ -1573,6 +1579,16 @@ def _echo_doctor_report(
         ),
         err=err,
     )
+
+
+def _check_local_pipeline_context(pipeline: dict[str, object] | None) -> dict[str, object] | None:
+    if not isinstance(pipeline, dict):
+        return pipeline
+
+    context = dict(pipeline)
+    if isinstance(context.get("auto_preflight"), dict):
+        context["auto_preflight_scope"] = "run/smoke"
+    return context
 
 
 def _echo_inspection(report: dict[str, object], *, output: InspectionOutputFormat) -> None:
@@ -1812,14 +1828,34 @@ def check_local(
         "--output",
         help="Result output format. Defaults to `summary` on a terminal and `json` otherwise.",
     ),
+    preflight: SmokePreflightMode = typer.Option(
+        SmokePreflightMode.ALWAYS,
+        "--preflight",
+        help=(
+            "Accepted for CLI parity with `run` and `smoke`. "
+            "`check-local` always runs the local doctor preflight, so only `auto` and `always` are allowed."
+        ),
+    ),
+    show_preflight: bool = typer.Option(
+        False,
+        "--show-preflight",
+        help="Accepted for CLI parity with `run` and `smoke`; `check-local` already prints preflight output to stderr.",
+    ),
     shell_bridge: bool = typer.Option(
         False,
         "--shell-bridge",
         help="Include a ready-to-paste bash login bridge suggestion when local shell startup needs one.",
     ),
 ) -> None:
+    if preflight == SmokePreflightMode.NEVER:
+        raise typer.BadParameter(
+            "`check-local` always runs the local doctor preflight; use `run` or `smoke` with `--preflight never` to skip it.",
+            param_hint="--preflight",
+        )
+    _ = show_preflight
     selected_path = path or default_smoke_pipeline_path()
     report, pipeline, _loaded_pipeline = _doctor_report_for_path(selected_path)
+    pipeline_context = _check_local_pipeline_context(pipeline)
     include_shell_bridge, recommendation = _doctor_shell_bridge_output(
         report,
         requested=shell_bridge,
@@ -1832,7 +1868,7 @@ def check_local(
         err=True,
         include_shell_bridge=include_shell_bridge,
         shell_bridge=recommendation,
-        pipeline=pipeline,
+        pipeline=pipeline_context,
     )
     if report.status == "failed":
         raise typer.Exit(code=1)
