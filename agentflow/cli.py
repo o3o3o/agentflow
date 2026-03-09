@@ -1623,6 +1623,52 @@ def _render_local_toolchain_summary(report: LocalToolchainReport) -> str:
     return "\n".join(lines)
 
 
+def _build_local_toolchain_summary_payload(report: LocalToolchainReport) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "status": report.status,
+        "startup": {
+            "bash_login_startup": report.bash_login_startup,
+            "files": dict(report.startup_files),
+            "shell_bridge": (
+                None
+                if report.shell_bridge is None
+                else {
+                    "target": report.shell_bridge.target,
+                    "source": report.shell_bridge.source,
+                    "reason": report.shell_bridge.reason,
+                }
+            ),
+        },
+    }
+
+    if report.anthropic_base_url is not None:
+        payload["kimi"] = {
+            "anthropic_base_url": report.anthropic_base_url,
+        }
+
+    codex: dict[str, str] = {}
+    if report.codex_auth is not None:
+        codex["auth"] = report.codex_auth
+    if report.codex_path is not None:
+        codex["path"] = report.codex_path
+    if report.codex_version is not None:
+        codex["version"] = report.codex_version
+    if codex:
+        payload["codex"] = codex
+
+    claude: dict[str, str] = {}
+    if report.claude_path is not None:
+        claude["path"] = report.claude_path
+    if report.claude_version is not None:
+        claude["version"] = report.claude_version
+    if claude:
+        payload["claude"] = claude
+
+    if report.detail is not None:
+        payload["detail"] = report.detail
+    return payload
+
+
 def _echo_local_toolchain_report(
     report: LocalToolchainReport,
     *,
@@ -1631,6 +1677,9 @@ def _echo_local_toolchain_report(
     resolved_output = _resolve_structured_output(output, err=False)
     if resolved_output == StructuredOutputFormat.SUMMARY:
         typer.echo(_render_local_toolchain_summary(report))
+        return
+    if resolved_output == StructuredOutputFormat.JSON_SUMMARY:
+        typer.echo(json.dumps(_build_local_toolchain_summary_payload(report), indent=2))
         return
 
     typer.echo(json.dumps(report.as_dict(), indent=2))
