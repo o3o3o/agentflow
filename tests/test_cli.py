@@ -3839,13 +3839,10 @@ def test_run_auto_preflight_stops_when_local_codex_auth_is_unavailable(monkeypat
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     def fake_run(*args, **kwargs):
-        command = args[0]
-        if isinstance(command, list):
-            target_command = " ".join(str(part) for part in command)
-        else:
-            target_command = str(command)
+        env = kwargs.get("env") or {}
+        target_command = env.get("AGENTFLOW_TARGET_COMMAND", "")
         return subprocess.CompletedProcess(
-            args=command,
+            args=args[0],
             returncode=1 if "subprocess.run" in target_command and "OPENAI_API_KEY" in target_command else 0,
             stdout="",
             stderr="",
@@ -3883,7 +3880,7 @@ def test_run_auto_preflight_stops_when_local_codex_auth_is_unavailable(monkeypat
 
     assert result.exit_code == 1
     assert captured["loaded_path"] == "custom-run.yaml"
-    assert result.stdout == (
+    assert (result.stderr or result.stdout) == (
         "Doctor: failed\n"
         "- bash_login_startup: ok - startup ready\n"
         "- kimi_shell_helper: ok - ready\n"
