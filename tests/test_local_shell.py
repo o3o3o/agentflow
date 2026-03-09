@@ -12,6 +12,7 @@ from agentflow.local_shell import (
     shell_command_uses_kimi_helper,
     shell_template_exports_env_var_before_command,
     shell_wrapper_requires_command_placeholder,
+    target_bash_login_startup_file,
     target_uses_interactive_bash,
 )
 
@@ -527,6 +528,22 @@ def test_shell_template_exports_env_var_before_command_rejects_invalid_inline_co
         )
         is False
     )
+
+
+def test_target_bash_login_startup_file_prefers_active_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".profile").write_text('if [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi\n', encoding="utf-8")
+
+    monkeypatch.setattr("agentflow.local_shell.Path.home", lambda: home)
+
+    target = {
+        "kind": "local",
+        "shell": "bash",
+        "shell_login": True,
+    }
+
+    assert target_bash_login_startup_file(target) == "~/.profile"
 
 
 @pytest.mark.parametrize(

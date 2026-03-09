@@ -15,6 +15,7 @@ from agentflow.local_shell import (
     shell_init_uses_kimi_helper,
     shell_template_exports_env_var_before_command,
     target_bash_home,
+    target_bash_login_startup_file,
 )
 from agentflow.agents.registry import AdapterRegistry, default_adapter_registry
 from agentflow.context import render_node_prompt
@@ -309,6 +310,10 @@ def _bootstrap_summary(target: dict[str, Any]) -> str | None:
 
     if target.get("shell_login"):
         parts.append("login=true")
+
+    login_startup = target_bash_login_startup_file(target)
+    if login_startup:
+        parts.append(f"startup={login_startup}")
 
     if target.get("shell_interactive"):
         parts.append("interactive=true")

@@ -1027,6 +1027,18 @@ def target_bash_home(target: Any, *, home: Path | None = None) -> Path:
     return _shell_command_effective_home_for_target(shell if isinstance(shell, str) else None, "bash", home=home)
 
 
+def target_bash_login_startup_file(target: Any, *, home: Path | None = None) -> str | None:
+    if not target_uses_login_bash(target):
+        return None
+
+    resolved_home = target_bash_home(target, home=home)
+    startup_file = _bash_login_startup_file(resolved_home)
+    if startup_file is None:
+        return None
+
+    return f"~/{startup_file.relative_to(resolved_home).as_posix()}"
+
+
 def shell_command_uses_kimi_helper(command: str | None) -> bool:
     if not isinstance(command, str) or not command.strip():
         return False

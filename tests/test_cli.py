@@ -353,6 +353,11 @@ nodes:
 
 
 def test_inspect_command_supports_json_summary_output(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".profile").write_text('if [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi\n', encoding="utf-8")
+    monkeypatch.setattr("agentflow.local_shell.Path.home", lambda: home)
+
     pipeline_path = tmp_path / "pipeline.yaml"
     pipeline_path.write_text(
         """name: inspect-json-summary
@@ -394,7 +399,7 @@ nodes:
             "capture": "final",
             "provider": "kimi, key=ANTHROPIC_API_KEY, url=https://api.kimi.com/coding/",
             "auth": "`ANTHROPIC_API_KEY` via `target.shell_init` (`kimi` helper)",
-            "bootstrap": "shell=bash, login=true, interactive=true, init=kimi",
+            "bootstrap": "shell=bash, login=true, startup=~/.profile, interactive=true, init=kimi",
             "prompt_preview": "Reply with exactly: claude ok",
             "prepared_command": "claude -p 'Reply with exactly: claude ok' --output-format stream-json --verbose --permission-mode bypassPermissions --tools Read,Glob,Grep,LS,NotebookRead,Task,TaskOutput,TodoRead,WebFetch,WebSearch",
             "launch": "bash -l -i -c 'kimi && eval \"$AGENTFLOW_TARGET_COMMAND\"'",
@@ -472,6 +477,11 @@ nodes:
 
 
 def test_inspect_command_redacts_inline_shell_bootstrap_secrets(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".profile").write_text('if [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi\n', encoding="utf-8")
+    monkeypatch.setattr("agentflow.local_shell.Path.home", lambda: home)
+
     pipeline_path = tmp_path / "pipeline.yaml"
     pipeline_path.write_text(
         """name: inspect-secret-shell-init
@@ -518,7 +528,7 @@ nodes:
     assert summary_result.exit_code == 0
     summary_payload = json.loads(summary_result.stdout)
     assert summary_payload["nodes"][0]["bootstrap"] == (
-        "shell=bash, login=true, interactive=true, init=export ANTHROPIC_API_KEY=<redacted> && kimi"
+        "shell=bash, login=true, startup=~/.profile, interactive=true, init=export ANTHROPIC_API_KEY=<redacted> && kimi"
     )
     assert summary_payload["nodes"][0]["auth"] == "`ANTHROPIC_API_KEY` via `target.shell_init`"
     assert summary_payload["nodes"][0]["launch"] == (
