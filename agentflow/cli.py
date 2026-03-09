@@ -531,8 +531,9 @@ def _pipeline_shell_bridge_recommendation(pipeline: object | None) -> ShellBridg
 
 
 def _node_auth_depends_on_local_shell_bootstrap(node: dict[str, object]) -> bool:
-    auth = node.get("auth")
-    return isinstance(auth, str) and auth.startswith("expects `") and "local shell bootstrap" in auth
+    from agentflow.inspection import inspection_node_auth_depends_on_local_shell_bootstrap
+
+    return inspection_node_auth_depends_on_local_shell_bootstrap(node)
 
 
 def _pipeline_auto_shell_bridge_recommendation(pipeline: object | None) -> ShellBridgeRecommendation | None:

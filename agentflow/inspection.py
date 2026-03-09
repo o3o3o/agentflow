@@ -519,10 +519,14 @@ def _bootstrap_home(
     return str(effective_home)
 
 
-def _auth_summary_depends_on_local_shell_bootstrap(auth_summary: str | None) -> bool:
+def auth_summary_depends_on_local_shell_bootstrap(auth_summary: str | None) -> bool:
     if not isinstance(auth_summary, str):
         return False
     return auth_summary.startswith("expects `") and "local shell bootstrap" in auth_summary
+
+
+def inspection_node_auth_depends_on_local_shell_bootstrap(node: dict[str, Any]) -> bool:
+    return auth_summary_depends_on_local_shell_bootstrap(node.get("auth"))
 
 
 def _target_shell_bridge(
@@ -545,7 +549,7 @@ def _target_shell_bridge(
     if (
         login_startup_file is not None
         and _kimi_helper_bootstrap_source(target) is None
-        and not _auth_summary_depends_on_local_shell_bootstrap(auth_summary)
+        and not auth_summary_depends_on_local_shell_bootstrap(auth_summary)
     ):
         return None
 
@@ -572,7 +576,7 @@ def _target_warnings(
     if login_startup_warning is not None and (
         login_startup_file is None
         or _kimi_helper_bootstrap_source(target) is not None
-        or _auth_summary_depends_on_local_shell_bootstrap(auth_summary)
+        or auth_summary_depends_on_local_shell_bootstrap(auth_summary)
     ):
         warnings.append(login_startup_warning)
 
