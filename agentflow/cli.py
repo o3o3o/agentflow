@@ -42,6 +42,7 @@ from agentflow.local_shell import (
     kimi_shell_init_requires_bash_warning,
     kimi_shell_init_requires_interactive_bash_warning,
     probe_target_bash_startup_env_var,
+    shell_command_overrides_env_var,
     shell_command_prefix_env_value,
     shell_command_uses_kimi_helper,
     shell_init_exported_env_var_value,
@@ -1093,9 +1094,11 @@ def _provider_credentials_probe_timeout_check(
     )
 
 
-def _effective_launch_env_value(key: str, launch_env: dict[str, str]) -> str:
+def _effective_launch_env_value(key: str, launch_env: dict[str, str], *, use_current_env: bool = True) -> str:
     if key in launch_env:
         return str(launch_env.get(key, "") or "")
+    if not use_current_env:
+        return ""
     return str(os.getenv(key, "") or "")
 
 
@@ -1121,10 +1124,15 @@ def _provider_credentials_missing_detail(
     launch_env: dict[str, str],
     node_env: dict[str, str],
     provider_env: dict[str, str],
+    shell_overrides_env: bool = False,
 ) -> str:
     provider_detail = f" provider `{provider_name}`" if provider_name else ""
     current_value = str(os.getenv(api_key_env, "") or "").strip()
-    launch_value = _effective_launch_env_value(api_key_env, launch_env).strip()
+    launch_value = _effective_launch_env_value(
+        api_key_env,
+        launch_env,
+        use_current_env=not shell_overrides_env,
+    ).strip()
     override_source = _provider_credentials_override_source(
         api_key_env,
         node_env=node_env,
@@ -1135,6 +1143,11 @@ def _provider_credentials_missing_detail(
         return (
             f"Node `{node_id}` ({agent}) requires `{api_key_env}` for{provider_detail}, but the launch env clears "
             f"the current environment value{source_detail}."
+        )
+    if current_value and shell_overrides_env and not launch_value:
+        return (
+            f"Node `{node_id}` ({agent}) requires `{api_key_env}` for{provider_detail}, but `target.shell` "
+            "overrides or clears the current environment value before launch."
         )
 
     return (
@@ -1158,7 +1171,16 @@ def _pipeline_provider_credential_checks(pipeline: object) -> list[DoctorCheck]:
         provider = resolve_provider(getattr(node, "provider", None), AgentKind(_status_value(getattr(node, "agent", None)).lower()))
         provider_env = getattr(provider, "env", None) or {}
         launch_env = merge_env_layers(provider_env, node_env)
-        has_key = bool(_effective_launch_env_value(api_key_env, launch_env).strip())
+        target = _coerce_local_target(getattr(node, "target", None))
+        shell = getattr(target, "shell", None) if target is not None else None
+        shell_overrides_env = isinstance(shell, str) and shell_command_overrides_env_var(shell, api_key_env)
+        has_key = bool(
+            _effective_launch_env_value(
+                api_key_env,
+                launch_env,
+                use_current_env=not shell_overrides_env,
+            ).strip()
+        )
         bootstrap_probe = _provider_credentials_local_bootstrap_probe(
             node,
             api_key_env=api_key_env,
@@ -1195,6 +1217,7 @@ def _pipeline_provider_credential_checks(pipeline: object) -> list[DoctorCheck]:
                     launch_env=launch_env,
                     node_env=node_env,
                     provider_env=provider_env,
+                    shell_overrides_env=shell_overrides_env,
                 ),
             )
         )

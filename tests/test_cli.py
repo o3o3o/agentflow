@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -7568,6 +7569,42 @@ def test_doctor_with_pipeline_path_fails_when_provider_env_clears_current_provid
         "Doctor: failed\n"
         "- provider_credentials: failed - Node `claude_review` (claude) requires `ANTHROPIC_API_KEY` for provider "
         "`anthropic`, but the launch env clears the current environment value via `provider.env`.\n"
+        "Pipeline auto preflight: disabled - path does not match the bundled smoke pipeline and no local "
+        "Codex/Claude/Kimi node uses `kimi` bootstrap.\n"
+    )
+
+
+def test_doctor_with_pipeline_path_fails_when_shell_wrapper_clears_current_provider_api_key(monkeypatch):
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(agentflow.cli, "build_local_smoke_doctor_report", lambda: _doctor_report())
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "ambient-anthropic-key")
+    fake_pipeline = SimpleNamespace(
+        nodes=[
+            SimpleNamespace(
+                id="claude_review",
+                agent=SimpleNamespace(value="claude"),
+                provider="anthropic",
+                env={},
+                executable=None,
+                target=SimpleNamespace(
+                    kind="local",
+                    shell=f"env -i PATH={os.environ.get('PATH', '/usr/bin:/bin')} bash",
+                ),
+            )
+        ],
+        working_path=Path.cwd(),
+    )
+    monkeypatch.setattr(agentflow.cli, "_load_pipeline", _capture_pipeline_loader(captured, fake_pipeline))
+
+    result = runner.invoke(app, ["doctor", "custom-smoke.yaml", "--output", "summary"])
+
+    assert result.exit_code == 1
+    assert captured["loaded_path"] == "custom-smoke.yaml"
+    assert result.stdout == (
+        "Doctor: failed\n"
+        "- provider_credentials: failed - Node `claude_review` (claude) requires `ANTHROPIC_API_KEY` for provider "
+        "`anthropic`, but `target.shell` overrides or clears the current environment value before launch.\n"
         "Pipeline auto preflight: disabled - path does not match the bundled smoke pipeline and no local "
         "Codex/Claude/Kimi node uses `kimi` bootstrap.\n"
     )

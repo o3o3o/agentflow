@@ -445,6 +445,79 @@ def shell_command_prefix_env_value(command: str | None, env_var: str) -> str | N
     return None
 
 
+def _shell_command_unsets_inherited_env_var(command: str | None, env_var: str) -> bool:
+    if not isinstance(command, str) or not command.strip() or not env_var:
+        return False
+
+    tokens = _split_shell_parts(command)
+    expects_command = True
+    prefix_allows_options = False
+    env_prefix = False
+    pending_unset_name = False
+    ignore_environment = False
+    cleared_names: set[str] = set()
+
+    for index, token in enumerate(tokens):
+        if index > 0 and _is_command_flag(tokens[index - 1]):
+            if _shell_command_unsets_inherited_env_var(token, env_var):
+                return True
+
+        normalized = _normalize_shell_token(token)
+        if _token_resets_command_position(token):
+            expects_command = True
+            prefix_allows_options = False
+            env_prefix = False
+            pending_unset_name = False
+            ignore_environment = False
+            cleared_names = set()
+            continue
+
+        if not expects_command:
+            continue
+
+        if pending_unset_name:
+            cleared_names.add(normalized)
+            pending_unset_name = False
+            continue
+
+        if _shell_token_matches_target(token, "env"):
+            prefix_allows_options = True
+            env_prefix = True
+            continue
+        if token in _COMMAND_POSITION_PREFIX_TOKENS:
+            prefix_allows_options = True
+            env_prefix = False
+            continue
+        if _looks_like_env_assignment(token):
+            continue
+        if prefix_allows_options and token == "--":
+            prefix_allows_options = False
+            continue
+        if prefix_allows_options and token.startswith("-"):
+            if env_prefix:
+                if normalized in {"-i", "--ignore-environment"}:
+                    ignore_environment = True
+                elif normalized == "-u":
+                    pending_unset_name = True
+                elif normalized.startswith("--unset="):
+                    cleared_names.add(normalized.split("=", 1)[1])
+                elif normalized.startswith("-u") and len(normalized) > 2:
+                    cleared_names.add(normalized[2:])
+            continue
+
+        if ignore_environment or env_var in cleared_names:
+            return True
+        expects_command = False
+
+    return False
+
+
+def shell_command_overrides_env_var(command: str | None, env_var: str) -> bool:
+    if shell_command_prefixes_env_var(command, env_var):
+        return True
+    return _shell_command_unsets_inherited_env_var(command, env_var)
+
+
 def _resolved_home_path(home: Path | None) -> Path:
     return (home or Path.home()).expanduser()
 

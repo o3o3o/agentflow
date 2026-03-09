@@ -12,6 +12,7 @@ from agentflow.local_shell import (
     probe_target_bash_startup_env_var,
     shell_command_prefix_env_value,
     shell_command_prefixes_env_var,
+    shell_command_overrides_env_var,
     shell_init_exports_env_var,
     shell_init_exported_env_var_value,
     shell_command_uses_kimi_helper,
@@ -101,6 +102,25 @@ def test_shell_command_prefixes_env_var_detects_prefix_assignments(command: str,
 
 def test_shell_command_prefix_env_value_preserves_empty_prefix_assignment():
     assert shell_command_prefix_env_value("env OPENAI_API_KEY= bash -c", "OPENAI_API_KEY") == ""
+
+
+@pytest.mark.parametrize(
+    ("command", "env_var", "expected"),
+    [
+        ("env -i PATH=/usr/bin:/bin bash -lc '{command}'", "ANTHROPIC_API_KEY", True),
+        ("env -u ANTHROPIC_API_KEY bash -lc '{command}'", "ANTHROPIC_API_KEY", True),
+        ("OPENAI_API_KEY= bash -lc '{command}'", "OPENAI_API_KEY", True),
+        ("env OPENAI_API_KEY=test-shell-key bash -lc '{command}'", "OPENAI_API_KEY", True),
+        ("sh -c 'env -i PATH=/usr/bin:/bin bash -lc \"{command}\"'", "OPENAI_API_KEY", True),
+        ("env PATH=/usr/bin:/bin bash -lc '{command}'", "OPENAI_API_KEY", False),
+    ],
+)
+def test_shell_command_overrides_env_var_detects_env_clearing_wrappers(
+    command: str,
+    env_var: str,
+    expected: bool,
+):
+    assert shell_command_overrides_env_var(command, env_var) is expected
 
 
 def test_kimi_shell_init_requires_interactive_bash_warning_ignores_probe_only_shell():
