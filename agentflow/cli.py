@@ -1606,9 +1606,17 @@ def _render_local_toolchain_summary(report: LocalToolchainReport) -> str:
         lines.append(f"ANTHROPIC_BASE_URL={report.anthropic_base_url}")
     if report.codex_auth:
         lines.append(f"codex auth: {report.codex_auth}")
-    if report.codex_version:
+    if report.codex_path and report.codex_version:
+        lines.append(f"codex: {report.codex_path} ({report.codex_version})")
+    elif report.codex_path:
+        lines.append(f"codex: {report.codex_path}")
+    elif report.codex_version:
         lines.append(f"codex: {report.codex_version}")
-    if report.claude_version:
+    if report.claude_path and report.claude_version:
+        lines.append(f"claude: {report.claude_path} ({report.claude_version})")
+    elif report.claude_path:
+        lines.append(f"claude: {report.claude_path}")
+    elif report.claude_version:
         lines.append(f"claude: {report.claude_version}")
     if report.detail:
         lines.append(f"detail: {report.detail}")

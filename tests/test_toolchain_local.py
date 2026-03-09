@@ -44,7 +44,9 @@ def test_build_local_kimi_toolchain_report_reports_startup_and_versions(
             stdout=(
                 "ANTHROPIC_BASE_URL=https://api.kimi.com/coding/\n"
                 "CODEX_AUTH=OPENAI_API_KEY + login\n"
+                "CLAUDE_PATH=/tmp/bin/claude\n"
                 "CLAUDE_VERSION=Claude Code 0.0.0\n"
+                "CODEX_PATH=/tmp/bin/codex\n"
                 "CODEX_VERSION=codex-cli 0.0.0\n"
             ),
             stderr="",
@@ -65,7 +67,9 @@ def test_build_local_kimi_toolchain_report_reports_startup_and_versions(
         shell_bridge=None,
         anthropic_base_url="https://api.kimi.com/coding/",
         codex_auth="OPENAI_API_KEY + login",
+        codex_path="/tmp/bin/codex",
         codex_version="codex-cli 0.0.0",
+        claude_path="/tmp/bin/claude",
         claude_version="Claude Code 0.0.0",
     )
 
@@ -149,6 +153,10 @@ def test_toolchain_local_command_renders_summary_with_shell_bridge(monkeypatch) 
             snippet='if [ -f "$HOME/.bashrc" ]; then\n  . "$HOME/.bashrc"\nfi\n',
             reason="Bash login startup uses `~/.bash_profile`, but it does not reference `~/.bashrc`.",
         ),
+        codex_path="/tmp/bin/codex",
+        codex_version="codex-cli 0.0.0",
+        claude_path="/tmp/bin/claude",
+        claude_version="Claude Code 0.0.0",
         detail="`kimi` is unavailable in `bash -lic`; add it to your bash startup files before running the bundled smoke pipeline.",
     )
     monkeypatch.setattr("agentflow.cli.build_local_kimi_toolchain_report", lambda: report)
@@ -159,6 +167,8 @@ def test_toolchain_local_command_renders_summary_with_shell_bridge(monkeypatch) 
     assert "Toolchain: failed" in result.stdout
     assert "~/.bash_profile: present" in result.stdout
     assert "bash login bridge target: ~/.bash_profile" in result.stdout
+    assert "codex: /tmp/bin/codex (codex-cli 0.0.0)" in result.stdout
+    assert "claude: /tmp/bin/claude (Claude Code 0.0.0)" in result.stdout
     assert '  . "$HOME/.bashrc"' in result.stdout
     assert "detail: `kimi` is unavailable in `bash -lic`" in result.stdout
 
@@ -175,7 +185,9 @@ def test_toolchain_local_command_emits_json(monkeypatch) -> None:
         shell_bridge=None,
         anthropic_base_url="https://api.kimi.com/coding/",
         codex_auth="OPENAI_API_KEY + login",
+        codex_path="/tmp/bin/codex",
         codex_version="codex-cli 0.0.0",
+        claude_path="/tmp/bin/claude",
         claude_version="Claude Code 0.0.0",
     )
     monkeypatch.setattr("agentflow.cli.build_local_kimi_toolchain_report", lambda: report)
@@ -194,6 +206,8 @@ def test_toolchain_local_command_emits_json(monkeypatch) -> None:
         "shell_bridge": None,
         "anthropic_base_url": "https://api.kimi.com/coding/",
         "codex_auth": "OPENAI_API_KEY + login",
+        "codex_path": "/tmp/bin/codex",
         "codex_version": "codex-cli 0.0.0",
+        "claude_path": "/tmp/bin/claude",
         "claude_version": "Claude Code 0.0.0",
     }

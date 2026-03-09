@@ -388,7 +388,9 @@ class LocalToolchainReport:
     shell_bridge: ShellBridgeRecommendation | None
     anthropic_base_url: str | None = None
     codex_auth: str | None = None
+    codex_path: str | None = None
     codex_version: str | None = None
+    claude_path: str | None = None
     claude_version: str | None = None
     detail: str | None = None
 
@@ -403,8 +405,12 @@ class LocalToolchainReport:
             payload["anthropic_base_url"] = self.anthropic_base_url
         if self.codex_auth is not None:
             payload["codex_auth"] = self.codex_auth
+        if self.codex_path is not None:
+            payload["codex_path"] = self.codex_path
         if self.codex_version is not None:
             payload["codex_version"] = self.codex_version
+        if self.claude_path is not None:
+            payload["claude_path"] = self.claude_path
         if self.claude_version is not None:
             payload["claude_version"] = self.claude_version
         if self.detail is not None:
@@ -1593,7 +1599,14 @@ def _parse_kimi_toolchain_probe_output(stdout: str) -> dict[str, str]:
         if not line or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        if key in {"ANTHROPIC_BASE_URL", "CODEX_AUTH", "CODEX_VERSION", "CLAUDE_VERSION"}:
+        if key in {
+            "ANTHROPIC_BASE_URL",
+            "CODEX_AUTH",
+            "CODEX_PATH",
+            "CODEX_VERSION",
+            "CLAUDE_PATH",
+            "CLAUDE_VERSION",
+        }:
             parsed[key] = value.strip()
     return parsed
 
@@ -1638,9 +1651,13 @@ def _run_kimi_toolchain_probe(home: Path | None = None) -> subprocess.CompletedP
             'codex_auth_label="${codex_auth_label} + ${codex_auth_source}"; '
             "done",
             'printf "CODEX_AUTH=%s\\n" "$codex_auth_label"',
+            'claude_path="$(type -P claude 2>/dev/null || true)"',
+            'if [ -n "$claude_path" ]; then printf "CLAUDE_PATH=%s\\n" "$claude_path"; fi',
             f'claude_version="$({shlex.quote("claude")} --version 2>/dev/null)" || exit {_CLAUDE_AFTER_KIMI_VERSION_FAILED_EXIT_CODE}',
             'claude_version="${claude_version%%$\'\\n\'*}"',
             'printf "CLAUDE_VERSION=%s\\n" "$claude_version"',
+            'codex_path="$(type -P codex 2>/dev/null || true)"',
+            'if [ -n "$codex_path" ]; then printf "CODEX_PATH=%s\\n" "$codex_path"; fi',
             f'codex_version="$({shlex.quote("codex")} --version 2>/dev/null)" || exit {_CODEX_AFTER_KIMI_VERSION_FAILED_EXIT_CODE}',
             'codex_version="${codex_version%%$\'\\n\'*}"',
             'printf "CODEX_VERSION=%s\\n" "$codex_version"',
@@ -1808,7 +1825,9 @@ def build_local_kimi_toolchain_report(home: Path | None = None) -> LocalToolchai
             shell_bridge=shell_bridge,
             anthropic_base_url=parsed.get("ANTHROPIC_BASE_URL"),
             codex_auth=parsed.get("CODEX_AUTH"),
+            codex_path=parsed.get("CODEX_PATH"),
             codex_version=parsed.get("CODEX_VERSION"),
+            claude_path=parsed.get("CLAUDE_PATH"),
             claude_version=parsed.get("CLAUDE_VERSION"),
             detail=kimi_check.detail,
         )
@@ -1829,7 +1848,9 @@ def build_local_kimi_toolchain_report(home: Path | None = None) -> LocalToolchai
             shell_bridge=shell_bridge,
             anthropic_base_url=parsed.get("ANTHROPIC_BASE_URL"),
             codex_auth=parsed.get("CODEX_AUTH"),
+            codex_path=parsed.get("CODEX_PATH"),
             codex_version=parsed.get("CODEX_VERSION"),
+            claude_path=parsed.get("CLAUDE_PATH"),
             claude_version=parsed.get("CLAUDE_VERSION"),
             detail=f"Local toolchain probe succeeded but did not report: {missing}.",
         )
@@ -1841,7 +1862,9 @@ def build_local_kimi_toolchain_report(home: Path | None = None) -> LocalToolchai
         shell_bridge=shell_bridge,
         anthropic_base_url=required_fields["anthropic_base_url"],
         codex_auth=required_fields["codex_auth"],
+        codex_path=parsed.get("CODEX_PATH"),
         codex_version=required_fields["codex_version"],
+        claude_path=parsed.get("CLAUDE_PATH"),
         claude_version=required_fields["claude_version"],
     )
 
