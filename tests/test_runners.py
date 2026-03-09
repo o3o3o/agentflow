@@ -52,6 +52,33 @@ async def test_local_runner_uses_configured_shell(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_local_runner_supports_exec_prefixed_shell_wrapper(tmp_path: Path):
+    shell_env = tmp_path / "shell.env"
+    shell_env.write_text("myagent(){ printf 'exec wrapper ok\\n'; }\n", encoding="utf-8")
+
+    node = NodeSpec.model_validate(
+        {
+            "id": "alpha-exec",
+            "agent": "codex",
+            "prompt": "hi",
+            "target": {"kind": "local", "shell": f"exec env BASH_ENV={shell_env} bash -c"},
+        }
+    )
+    prepared = PreparedExecution(
+        command=["myagent"],
+        env={},
+        cwd=str(tmp_path),
+        trace_kind="codex",
+    )
+
+    result = await LocalRunner().execute(node, prepared, _paths(tmp_path), _noop_output, lambda: False)
+
+    assert result.exit_code == 0
+    assert result.stdout_lines == ["exec wrapper ok"]
+    assert result.stderr_lines == []
+
+
+@pytest.mark.asyncio
 async def test_local_runner_shell_template_bootstraps_command(tmp_path: Path):
     shell_env = tmp_path / "shell.env"
     shell_env.write_text("kimi(){ export WRAPPED_VALUE='template ok'; }\n", encoding="utf-8")

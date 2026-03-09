@@ -18,6 +18,7 @@ from agentflow.local_shell import (
     shell_template_exports_env_var_before_command,
     shell_wrapper_requires_command_placeholder,
     summarize_target_bash_login_startup,
+    target_bash_home,
     target_bash_login_startup_warning,
     target_bash_login_startup_chain,
     target_bash_login_startup_file,
@@ -954,6 +955,18 @@ def test_target_bash_startup_exports_env_var_uses_shell_wrapper_env_and_bash_exe
     assert observed["command"] == ["/opt/custom/bash", "-lc", 'test -n "${ANTHROPIC_API_KEY:-}"']
     assert observed["env"]["AGENTFLOW_KIMI_ENV_FILE"] == str(auth_file)
     assert observed["env"]["HOME"] == str(home)
+
+
+def test_target_bash_home_uses_exec_prefixed_shell_wrapper_env(tmp_path: Path):
+    home = tmp_path / "home"
+    home.mkdir()
+
+    target = {
+        "kind": "local",
+        "shell": f"exec env HOME={home} bash -lic '{{command}}'",
+    }
+
+    assert target_bash_home(target) == home
 
 
 def test_target_bash_startup_exports_env_var_prefers_shell_wrapper_env_over_launch_env(
