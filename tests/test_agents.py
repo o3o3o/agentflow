@@ -241,6 +241,22 @@ def test_codex_adapter_prefers_node_env_over_provider_env(tmp_path):
     assert prepared.env["OPENAI_API_KEY"] == "node-secret"
 
 
+def test_codex_adapter_preserves_empty_openai_base_url_override(tmp_path):
+    node = NodeSpec.model_validate(
+        {
+            "id": "plan",
+            "agent": "codex",
+            "prompt": "Plan",
+            "env": {"OPENAI_BASE_URL": ""},
+        }
+    )
+
+    prepared = CodexAdapter().prepare(node, "Plan", _paths(tmp_path))
+
+    assert "OPENAI_BASE_URL" in prepared.env
+    assert prepared.env["OPENAI_BASE_URL"] == ""
+
+
 def test_kimi_adapter_prefers_node_env_over_provider_env(tmp_path):
     node = NodeSpec.model_validate(
         {

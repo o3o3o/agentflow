@@ -158,6 +158,52 @@ async def test_local_runner_shell_init_runs_in_login_interactive_shell(tmp_path:
 
 
 @pytest.mark.asyncio
+async def test_local_runner_shell_init_adds_interactive_flag_after_env_wrapper_options(tmp_path: Path):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    (fake_home / ".hushlogin").write_text("", encoding="utf-8")
+    (fake_home / ".profile").write_text(
+        'if [ -f "$HOME/.bashrc" ]; then\n  . "$HOME/.bashrc"\nfi\n',
+        encoding="utf-8",
+    )
+    (fake_home / ".bashrc").write_text(
+        "case $- in\n"
+        "  *i*) ;;\n"
+        "  *) return;;\n"
+        "esac\n"
+        "kimi(){ export WRAPPED_VALUE=wrapped-interactive-ok; }\n",
+        encoding="utf-8",
+    )
+
+    node = NodeSpec.model_validate(
+        {
+            "id": "gamma-env-wrapper",
+            "agent": "claude",
+            "prompt": "hi",
+            "target": {
+                "kind": "local",
+                "shell": f"env -i HOME={fake_home} PATH={os.environ.get('PATH', '/usr/bin:/bin')} bash",
+                "shell_login": True,
+                "shell_interactive": True,
+                "shell_init": "kimi",
+            },
+        }
+    )
+    prepared = PreparedExecution(
+        command=["bash", "-lc", 'printf "%s" "$WRAPPED_VALUE"'],
+        env={},
+        cwd=str(tmp_path),
+        trace_kind="claude",
+    )
+
+    result = await LocalRunner().execute(node, prepared, _paths(tmp_path), _noop_output, lambda: False)
+
+    assert result.exit_code == 0
+    assert result.stdout_lines[-1] == "wrapped-interactive-ok"
+    assert result.stderr_lines == []
+
+
+@pytest.mark.asyncio
 async def test_local_runner_inherited_kimi_bootstrap_defaults_run_in_login_interactive_shell(tmp_path: Path):
     fake_home = tmp_path / "home"
     fake_home.mkdir()
@@ -399,6 +445,35 @@ async def test_local_runner_plain_shell_does_not_enable_login_mode(tmp_path: Pat
 
     assert result.exit_code == 0
     assert result.stdout_lines == ["missing"]
+    assert result.stderr_lines == []
+
+
+@pytest.mark.asyncio
+async def test_local_runner_empty_env_value_clears_inherited_host_env(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://relay.example/v1")
+
+    node = NodeSpec.model_validate(
+        {
+            "id": "delta-clear-env",
+            "agent": "codex",
+            "prompt": "hi",
+        }
+    )
+    prepared = PreparedExecution(
+        command=[
+            "python3",
+            "-c",
+            'import json, os; print(json.dumps(os.getenv("OPENAI_BASE_URL")))',
+        ],
+        env={"OPENAI_BASE_URL": ""},
+        cwd=str(tmp_path),
+        trace_kind="codex",
+    )
+
+    result = await LocalRunner().execute(node, prepared, _paths(tmp_path), _noop_output, lambda: False)
+
+    assert result.exit_code == 0
+    assert result.stdout_lines == ['""']
     assert result.stderr_lines == []
 
 
