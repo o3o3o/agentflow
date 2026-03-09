@@ -16,6 +16,7 @@ from agentflow.local_shell import (
     summarize_target_bash_login_startup,
     shell_template_exports_env_var_before_command,
     target_bash_home,
+    target_bash_login_startup_file,
     target_bash_login_startup_warning,
     target_bash_startup_exports_env_var,
     target_uses_interactive_bash,
@@ -215,17 +216,22 @@ def _format_auth_source_summary(
 
 
 def _kimi_helper_bootstrap_source(target: object) -> tuple[str, str] | None:
-    if getattr(target, "kind", None) != "local":
+    def target_value(key: str) -> Any:
+        if isinstance(target, dict):
+            return target.get(key)
+        return getattr(target, key, None)
+
+    if target_value("kind") != "local":
         return None
 
-    if str(getattr(target, "bootstrap", "")).strip().lower() == "kimi":
+    if str(target_value("bootstrap") or "").strip().lower() == "kimi":
         return ("`target.bootstrap` (`kimi` helper)", "target.bootstrap")
 
-    shell_init = getattr(target, "shell_init", None)
+    shell_init = target_value("shell_init")
     if shell_init_uses_kimi_helper(shell_init):
         return ("`target.shell_init` (`kimi` helper)", "target.shell_init")
 
-    shell = getattr(target, "shell", None)
+    shell = target_value("shell")
     if shell_command_uses_kimi_helper(shell if isinstance(shell, str) else None):
         return ("`target.shell` (`kimi` helper)", "target.shell")
 
@@ -404,7 +410,10 @@ def _target_warnings(
     effective_home = target_bash_home(target, env=launch_env, cwd=cwd)
 
     login_startup_warning = target_bash_login_startup_warning(target, env=launch_env, cwd=cwd)
-    if login_startup_warning is not None:
+    login_startup_file = target_bash_login_startup_file(target, env=launch_env, cwd=cwd)
+    if login_startup_warning is not None and (
+        login_startup_file is None or _kimi_helper_bootstrap_source(target) is not None
+    ):
         warnings.append(login_startup_warning)
 
     kimi_bash_warning = kimi_shell_init_requires_bash_warning(target)

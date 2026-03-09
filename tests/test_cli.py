@@ -499,6 +499,7 @@ nodes:
             "launch": "bash -l -i -c 'kimi && eval \"$AGENTFLOW_TARGET_COMMAND\"'",
             "cwd": str(tmp_path.resolve()),
             "env_keys": ["AGENTFLOW_TARGET_COMMAND", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"],
+            "warnings": ["Bash login startup reaches `~/.bashrc`, but that file does not exist."],
         }
     ]
 
@@ -547,20 +548,24 @@ working_dir: .
 nodes:
   - id: review
     agent: claude
+    provider: kimi
     prompt: hi
     target:
       kind: local
-      shell: bash
-      shell_login: true
+      bootstrap: kimi
 """,
         encoding="utf-8",
     )
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "super-secret")
 
     result = runner.invoke(app, ["inspect", str(pipeline_path), "--output", "json-summary"])
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["nodes"][0]["bootstrap"] == "shell=bash, login=true, startup=~/.bash_profile"
+    assert payload["nodes"][0]["bootstrap"] == (
+        "preset=kimi, shell=bash, login=true, startup=~/.bash_profile, interactive=true, "
+        "init=command -v kimi >/dev/null 2>&1 && kimi"
+    )
     assert payload["nodes"][0]["warnings"] == [
         "Bash login startup uses `~/.bash_profile`, but it does not reach `~/.bashrc`."
     ]
@@ -579,20 +584,24 @@ working_dir: .
 nodes:
   - id: review
     agent: claude
+    provider: kimi
     prompt: hi
     target:
       kind: local
-      shell: bash
-      shell_login: true
+      bootstrap: kimi
 """,
         encoding="utf-8",
     )
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "super-secret")
 
     result = runner.invoke(app, ["inspect", str(pipeline_path), "--output", "json-summary"])
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["nodes"][0]["bootstrap"] == "shell=bash, login=true, startup=~/.profile -> ~/.bashrc"
+    assert payload["nodes"][0]["bootstrap"] == (
+        "preset=kimi, shell=bash, login=true, startup=~/.profile -> ~/.bashrc, interactive=true, "
+        "init=command -v kimi >/dev/null 2>&1 && kimi"
+    )
     assert payload["nodes"][0]["warnings"] == [
         "Bash login startup reaches `~/.bashrc`, but that file does not exist."
     ]
@@ -648,6 +657,7 @@ nodes:
             "launch": "bash -l -i -c 'command -v kimi >/dev/null 2>&1 && kimi && eval \"$AGENTFLOW_TARGET_COMMAND\"'",
             "cwd": str(tmp_path.resolve()),
             "env_keys": ["AGENTFLOW_TARGET_COMMAND", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"],
+            "warnings": ["Bash login startup reaches `~/.bashrc`, but that file does not exist."],
         }
     ]
 
@@ -698,6 +708,7 @@ nodes:
             "launch": "bash -l -i -c 'export EXTRA_FLAG=1 && command -v kimi >/dev/null 2>&1 && kimi && eval \"$AGENTFLOW_TARGET_COMMAND\"'",
             "cwd": str(tmp_path.resolve()),
             "env_keys": ["AGENTFLOW_TARGET_COMMAND", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"],
+            "warnings": ["Bash login startup reaches `~/.bashrc`, but that file does not exist."],
         }
     ]
 
