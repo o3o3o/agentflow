@@ -102,6 +102,28 @@ def test_verify_local_kimi_shell_script_reports_bash_profile_startup_when_presen
     assert completed.stderr == ""
 
 
+def test_verify_local_kimi_shell_script_requires_kimi_to_export_anthropic_env(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    _write_fake_shell_home(home, kimi_body=":")
+
+    repo_root = Path(__file__).resolve().parents[1]
+    script_path = repo_root / "scripts" / "verify-local-kimi-shell.sh"
+
+    completed = _run_script(
+        script_path,
+        repo_root=repo_root,
+        home=home,
+        ANTHROPIC_API_KEY="ambient-kimi-key",
+        ANTHROPIC_BASE_URL="https://api.kimi.com/coding/",
+        OPENAI_API_KEY="",
+    )
+
+    assert completed.returncode == 1
+    assert "~/.profile: present" in completed.stdout
+    assert "kimi did not export ANTHROPIC_API_KEY" in completed.stderr
+
+
 def test_verify_custom_local_kimi_shell_init_wrapper_forces_shell_init_mode(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     scripts_dir = tmp_path / "scripts"

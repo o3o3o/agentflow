@@ -64,6 +64,7 @@ printf "%s\n" "$bash_login_bridge_summary"
 
 agentflow_run_with_timeout "$python_bin" env EXPECTED_ANTHROPIC_BASE_URL="$expected_anthropic_base_url" bash -lic '
 command -v kimi >/dev/null 2>&1
+unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL
 kimi >/dev/null
 [ -n "${ANTHROPIC_API_KEY:-}" ] || {
   echo "kimi did not export ANTHROPIC_API_KEY" >&2
