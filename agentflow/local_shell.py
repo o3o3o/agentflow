@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import shlex
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -1234,6 +1235,40 @@ def target_uses_login_bash(target: Any) -> bool:
 def target_bash_home(target: Any, *, home: Path | None = None) -> Path:
     shell = _target_value(target, "shell")
     return _shell_command_effective_home_for_target(shell if isinstance(shell, str) else None, "bash", home=home)
+
+
+def target_bash_startup_exports_env_var(target: Any, env_var: str, *, home: Path | None = None) -> bool:
+    if not env_var or not target_uses_bash(target):
+        return False
+
+    uses_login_bash = target_uses_login_bash(target)
+    uses_interactive_bash = target_uses_interactive_bash(target)
+    if not (uses_login_bash or uses_interactive_bash):
+        return False
+
+    effective_home = target_bash_home(target, home=home)
+    env = os.environ.copy()
+    env["HOME"] = str(effective_home)
+
+    bash_flag = "-"
+    if uses_login_bash:
+        bash_flag += "l"
+    if uses_interactive_bash:
+        bash_flag += "i"
+    bash_flag += "c"
+
+    try:
+        result = subprocess.run(
+            ["bash", bash_flag, f'test -n "${{{env_var}:-}}"'],
+            check=False,
+            capture_output=True,
+            env=env,
+            text=True,
+        )
+    except OSError:
+        return False
+
+    return result.returncode == 0
 
 
 def target_bash_login_startup_file(target: Any, *, home: Path | None = None) -> str | None:

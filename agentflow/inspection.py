@@ -17,6 +17,7 @@ from agentflow.local_shell import (
     target_bash_home,
     target_bash_login_startup_chain,
     target_bash_login_startup_file,
+    target_bash_startup_exports_env_var,
     target_uses_interactive_bash,
     target_uses_login_bash,
 )
@@ -234,6 +235,21 @@ def _helper_bootstrap_is_primary_auth_source(
     return provider_uses_kimi_anthropic_auth(resolved_provider)
 
 
+def _bash_startup_auth_source_label(target: object) -> tuple[str, str] | None:
+    if getattr(target, "kind", None) != "local":
+        return None
+
+    uses_login_bash = target_uses_login_bash(target)
+    uses_interactive_bash = target_uses_interactive_bash(target)
+    if uses_login_bash and uses_interactive_bash:
+        return ("local bash login and interactive startup files", "target.bash_startup")
+    if uses_login_bash:
+        return ("local bash login startup files", "target.bash_startup")
+    if uses_interactive_bash:
+        return ("local bash interactive startup files", "target.bash_startup")
+    return None
+
+
 def _auth_summary(node: NodeSpec, resolved_provider: object) -> str | None:
     api_key_env, provider_name = _resolved_auth_requirement(node)
     if not api_key_env:
@@ -242,6 +258,7 @@ def _auth_summary(node: NodeSpec, resolved_provider: object) -> str | None:
     target = node.target
     explicit_bootstrap_source: tuple[str, str] | None = None
     helper_bootstrap_source: tuple[str, str] | None = None
+    bash_startup_source: tuple[str, str] | None = None
     provider_uses_kimi_helper_auth = (
         api_key_env == "ANTHROPIC_API_KEY" and provider_uses_kimi_anthropic_auth(resolved_provider)
     )
@@ -264,6 +281,9 @@ def _auth_summary(node: NodeSpec, resolved_provider: object) -> str | None:
 
         if provider_uses_kimi_helper_auth or node.agent == AgentKind.CODEX:
             helper_bootstrap_source = _kimi_helper_bootstrap_source(target)
+
+        if helper_bootstrap_source is None and target_bash_startup_exports_env_var(target, api_key_env, home=effective_home):
+            bash_startup_source = _bash_startup_auth_source_label(target)
 
     if explicit_bootstrap_source is not None:
         return _format_auth_source_summary(api_key_env, explicit_bootstrap_source, helper_bootstrap_source)
@@ -294,6 +314,9 @@ def _auth_summary(node: NodeSpec, resolved_provider: object) -> str | None:
             ("current environment", "current environment"),
             helper_bootstrap_source,
         )
+
+    if bash_startup_source is not None:
+        return _format_auth_source_summary(api_key_env, bash_startup_source, helper_bootstrap_source)
 
     if helper_bootstrap_source is not None:
         if node.agent == AgentKind.CODEX:

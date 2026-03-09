@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from agentflow.local_shell import (
     shell_wrapper_requires_command_placeholder,
     target_bash_login_startup_chain,
     target_bash_login_startup_file,
+    target_bash_startup_exports_env_var,
     target_uses_interactive_bash,
 )
 
@@ -569,6 +571,32 @@ def test_shell_template_exports_env_var_before_command_detects_split_assignment_
         )
         is True
     )
+
+
+def test_target_bash_startup_exports_env_var_checks_login_shell_startup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    home = tmp_path / "home"
+    home.mkdir()
+    observed: dict[str, object] = {}
+
+    def fake_run(command, **kwargs):
+        observed["command"] = list(command)
+        observed["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("agentflow.local_shell.subprocess.run", fake_run)
+
+    target = {
+        "kind": "local",
+        "shell": "bash",
+        "shell_login": True,
+    }
+
+    assert target_bash_startup_exports_env_var(target, "ANTHROPIC_API_KEY", home=home) is True
+    assert observed["command"] == ["bash", "-lc", 'test -n "${ANTHROPIC_API_KEY:-}"']
+    assert observed["env"]["HOME"] == str(home)
 
 
 def test_shell_template_exports_env_var_before_command_detects_prefix_env_wrapper():

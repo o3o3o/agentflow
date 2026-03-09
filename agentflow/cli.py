@@ -33,6 +33,7 @@ from agentflow.local_shell import (
     shell_init_exports_env_var,
     shell_init_uses_kimi_helper,
     shell_template_exports_env_var_before_command,
+    target_bash_startup_exports_env_var,
     target_bash_home,
     target_uses_interactive_bash,
     target_uses_login_bash,
@@ -788,29 +789,8 @@ def _provider_credentials_come_from_local_bootstrap(
             return True
         if shell_command_prefixes_env_var(shell if isinstance(shell, str) else None, api_key_env):
             return True
-        uses_login_bash = target_uses_login_bash(target)
-        uses_interactive_bash = target_uses_interactive_bash(target)
-        if uses_login_bash or uses_interactive_bash:
-            env = os.environ.copy()
-            env["HOME"] = str(effective_home)
-            bash_flag = "-"
-            if uses_login_bash:
-                bash_flag += "l"
-            if uses_interactive_bash:
-                bash_flag += "i"
-            bash_flag += "c"
-            try:
-                result = subprocess.run(
-                    ["bash", bash_flag, f'test -n "${{{api_key_env}:-}}"'],
-                    check=False,
-                    capture_output=True,
-                    env=env,
-                    text=True,
-                )
-            except OSError:
-                result = None
-            if result is not None and result.returncode == 0:
-                return True
+        if target_bash_startup_exports_env_var(target, api_key_env, home=effective_home):
+            return True
 
     if api_key_env == "ANTHROPIC_API_KEY" and provider_uses_kimi_anthropic_auth(provider):
         return _node_uses_kimi_smoke_bootstrap(node)

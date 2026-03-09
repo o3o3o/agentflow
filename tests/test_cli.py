@@ -1010,6 +1010,36 @@ nodes:
     assert payload["nodes"][0]["auth"] == "`ANTHROPIC_API_KEY` via `target.shell`"
 
 
+def test_inspect_command_summary_treats_login_shell_startup_as_auth_source(tmp_path, monkeypatch):
+    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path.write_text(
+        """name: inspect-claude-login-startup-provider-key
+working_dir: .
+nodes:
+  - id: review
+    agent: claude
+    provider: anthropic
+    prompt: hi
+    target:
+      kind: local
+      shell: bash
+      shell_login: true
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "agentflow.local_shell.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args=args[0], returncode=0, stdout="", stderr=""),
+    )
+
+    result = runner.invoke(app, ["inspect", str(pipeline_path), "--output", "json-summary"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["nodes"][0]["auth"] == "`ANTHROPIC_API_KEY` via local bash login startup files"
+
+
 def test_inspect_command_summary_treats_custom_kimi_provider_shell_bootstrap_as_auth_source(tmp_path, monkeypatch):
     pipeline_path = tmp_path / "pipeline.yaml"
     pipeline_path.write_text(
