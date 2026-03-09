@@ -151,6 +151,56 @@ def _disable_local_readiness_probes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(agentflow.cli, "build_pipeline_local_codex_auth_info_checks", lambda pipeline: [])
 
 
+def _mock_local_readiness_info(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(agentflow.cli, "build_pipeline_local_kimi_readiness_checks", lambda pipeline: [])
+    monkeypatch.setattr(agentflow.cli, "build_pipeline_local_claude_readiness_checks", lambda pipeline: [])
+    monkeypatch.setattr(agentflow.cli, "build_pipeline_local_codex_readiness_checks", lambda pipeline: [])
+    monkeypatch.setattr(agentflow.cli, "build_pipeline_local_codex_auth_checks", lambda pipeline: [])
+    monkeypatch.setattr(agentflow.cli, "build_pipeline_local_kimi_readiness_info_checks", lambda pipeline: [])
+    monkeypatch.setattr(
+        agentflow.cli,
+        "build_pipeline_local_claude_readiness_info_checks",
+        lambda pipeline: [
+            DoctorCheck(
+                name="claude_ready",
+                status="ok",
+                detail=(
+                    "Node `claude_review` (claude) can launch local Claude after the node shell bootstrap; "
+                    "`claude --version` succeeds in the prepared local shell."
+                ),
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        agentflow.cli,
+        "build_pipeline_local_codex_readiness_info_checks",
+        lambda pipeline: [
+            DoctorCheck(
+                name="codex_ready",
+                status="ok",
+                detail=(
+                    "Node `codex_plan` (codex) can launch local Codex after the node shell bootstrap; "
+                    "`codex --version` succeeds in the prepared local shell."
+                ),
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        agentflow.cli,
+        "build_pipeline_local_codex_auth_info_checks",
+        lambda pipeline: [
+            DoctorCheck(
+                name="codex_auth",
+                status="ok",
+                detail=(
+                    "Node `codex_plan` (codex) can authenticate local Codex after the node shell bootstrap via "
+                    "`codex login status` or `OPENAI_API_KEY`."
+                ),
+            )
+        ],
+    )
+
+
 def _completed_run(
     run_id: str,
     *,
@@ -4423,6 +4473,7 @@ def test_check_local_uses_bundled_pipeline_by_default(monkeypatch):
 
     monkeypatch.setenv("AGENTFLOW_RUNS_DIR", "/tmp/agentflow-check-local-runs")
     monkeypatch.setenv("AGENTFLOW_MAX_CONCURRENT_RUNS", "4")
+    _mock_local_readiness_info(monkeypatch)
 
     class FakeOrchestrator:
         async def submit(self, pipeline: object):
@@ -4450,7 +4501,20 @@ def test_check_local_uses_bundled_pipeline_by_default(monkeypatch):
     )
 
     bundled_path = str((Path.cwd() / "examples/local-real-agents-kimi-smoke.yaml").resolve())
-    fake_pipeline = object()
+    fake_pipeline = SimpleNamespace(
+        nodes=[
+            SimpleNamespace(
+                id="codex_plan",
+                agent=SimpleNamespace(value="codex"),
+                target=SimpleNamespace(kind="local", shell="bash", shell_login=True, shell_interactive=True, shell_init="kimi"),
+            ),
+            SimpleNamespace(
+                id="claude_review",
+                agent=SimpleNamespace(value="claude"),
+                target=SimpleNamespace(kind="local", shell="bash", shell_login=True, shell_interactive=True, shell_init="kimi"),
+            ),
+        ]
+    )
     monkeypatch.setattr(agentflow.cli, "default_smoke_pipeline_path", lambda: bundled_path)
     monkeypatch.setattr(agentflow.cli, "_load_pipeline", _capture_pipeline_loader(captured, fake_pipeline))
 
@@ -4460,7 +4524,11 @@ def test_check_local_uses_bundled_pipeline_by_default(monkeypatch):
     assert result.stderr == (
         "Doctor: ok\n"
         "- kimi_shell_helper: ok - ready\n"
+        "- claude_ready: ok - Node `claude_review` (claude) can launch local Claude after the node shell bootstrap; `claude --version` succeeds in the prepared local shell.\n"
+        "- codex_ready: ok - Node `codex_plan` (codex) can launch local Codex after the node shell bootstrap; `codex --version` succeeds in the prepared local shell.\n"
+        "- codex_auth: ok - Node `codex_plan` (codex) can authenticate local Codex after the node shell bootstrap via `codex login status` or `OPENAI_API_KEY`.\n"
         "Pipeline auto preflight: enabled - path matches the bundled real-agent smoke pipeline.\n"
+        "Pipeline auto preflight matches: codex_plan (codex) via `target.shell_init`, claude_review (claude) via `target.shell_init`\n"
     )
     assert "Run check-local-123: completed" in result.stdout
     assert captured["loaded_path"] == bundled_path
@@ -4915,6 +4983,7 @@ nodes:
 
 def test_smoke_show_preflight_prints_successful_summary_to_stderr(monkeypatch):
     captured: dict[str, object] = {}
+    _mock_local_readiness_info(monkeypatch)
 
     class FakeOrchestrator:
         async def submit(self, pipeline: object):
@@ -4955,6 +5024,9 @@ def test_smoke_show_preflight_prints_successful_summary_to_stderr(monkeypatch):
     assert result.stderr == (
         "Doctor: ok\n"
         "- kimi_shell_helper: ok - ready\n"
+        "- claude_ready: ok - Node `claude_review` (claude) can launch local Claude after the node shell bootstrap; `claude --version` succeeds in the prepared local shell.\n"
+        "- codex_ready: ok - Node `codex_plan` (codex) can launch local Codex after the node shell bootstrap; `codex --version` succeeds in the prepared local shell.\n"
+        "- codex_auth: ok - Node `codex_plan` (codex) can authenticate local Codex after the node shell bootstrap via `codex login status` or `OPENAI_API_KEY`.\n"
         "Pipeline auto preflight: enabled - path matches the bundled real-agent smoke pipeline.\n"
         "Pipeline auto preflight matches: codex_plan (codex) via `target.shell_init`, claude_review (claude) via `target.shell_init`\n"
     )
@@ -4966,6 +5038,8 @@ def test_smoke_show_preflight_prints_successful_summary_to_stderr(monkeypatch):
 
 
 def test_smoke_show_preflight_keeps_json_stdout_machine_readable(monkeypatch):
+    _mock_local_readiness_info(monkeypatch)
+
     class FakeOrchestrator:
         async def submit(self, pipeline: object):
             return SimpleNamespace(id="smoke-show-preflight-json")
@@ -5005,6 +5079,9 @@ def test_smoke_show_preflight_keeps_json_stdout_machine_readable(monkeypatch):
     assert result.stderr == (
         "Doctor: ok\n"
         "- kimi_shell_helper: ok - ready\n"
+        "- claude_ready: ok - Node `claude_review` (claude) can launch local Claude after the node shell bootstrap; `claude --version` succeeds in the prepared local shell.\n"
+        "- codex_ready: ok - Node `codex_plan` (codex) can launch local Codex after the node shell bootstrap; `codex --version` succeeds in the prepared local shell.\n"
+        "- codex_auth: ok - Node `codex_plan` (codex) can authenticate local Codex after the node shell bootstrap via `codex login status` or `OPENAI_API_KEY`.\n"
         "Pipeline auto preflight: enabled - path matches the bundled real-agent smoke pipeline.\n"
         "Pipeline auto preflight matches: codex_plan (codex) via `target.shell_init`, claude_review (claude) via `target.shell_init`\n"
     )
@@ -5814,6 +5891,44 @@ def test_doctor_supports_summary_output(monkeypatch):
 
     assert result.exit_code == 0
     assert result.stdout == "Doctor: ok\n- kimi_shell_helper: ok - ready\n"
+
+
+def test_doctor_without_path_includes_bundled_local_readiness_info(monkeypatch):
+    captured: dict[str, object] = {}
+
+    monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
+    _mock_local_readiness_info(monkeypatch)
+    monkeypatch.setattr(agentflow.cli, "build_local_smoke_doctor_report", lambda: _doctor_report())
+    bundled_path = str((Path.cwd() / "examples/local-real-agents-kimi-smoke.yaml").resolve())
+    monkeypatch.setattr(agentflow.cli, "default_smoke_pipeline_path", lambda: bundled_path)
+    fake_pipeline = SimpleNamespace(
+        nodes=[
+            SimpleNamespace(
+                id="codex_plan",
+                agent=SimpleNamespace(value="codex"),
+                target=SimpleNamespace(kind="local", shell="bash", shell_login=True, shell_interactive=True, shell_init="kimi"),
+            ),
+            SimpleNamespace(
+                id="claude_review",
+                agent=SimpleNamespace(value="claude"),
+                target=SimpleNamespace(kind="local", shell="bash", shell_login=True, shell_interactive=True, shell_init="kimi"),
+            ),
+        ]
+    )
+    monkeypatch.setattr(agentflow.cli, "_load_pipeline", _capture_pipeline_loader(captured, fake_pipeline))
+    monkeypatch.setattr(agentflow.cli, "_stream_supports_tty_summary", lambda *, err: True)
+
+    result = runner.invoke(app, ["doctor"])
+
+    assert result.exit_code == 0
+    assert captured["loaded_path"] == bundled_path
+    assert result.stdout == (
+        "Doctor: ok\n"
+        "- kimi_shell_helper: ok - ready\n"
+        "- claude_ready: ok - Node `claude_review` (claude) can launch local Claude after the node shell bootstrap; `claude --version` succeeds in the prepared local shell.\n"
+        "- codex_ready: ok - Node `codex_plan` (codex) can launch local Codex after the node shell bootstrap; `codex --version` succeeds in the prepared local shell.\n"
+        "- codex_auth: ok - Node `codex_plan` (codex) can authenticate local Codex after the node shell bootstrap via `codex login status` or `OPENAI_API_KEY`.\n"
+    )
 
 
 def test_doctor_with_pipeline_path_augments_report_for_kimi_shell_bootstrap_warning(monkeypatch):
