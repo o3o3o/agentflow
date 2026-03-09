@@ -18,6 +18,7 @@ from agentflow.doctor import (
     DoctorCheck,
     DoctorReport,
     build_bash_login_shell_bridge_recommendation,
+    build_local_kimi_bootstrap_doctor_report,
     build_pipeline_local_kimi_readiness_checks,
     build_pipeline_local_claude_readiness_checks,
     build_pipeline_local_codex_readiness_checks,
@@ -432,6 +433,18 @@ def _doctor_report():
     return build_local_smoke_doctor_report()
 
 
+def _preflight_base_report(path: str, pipeline: object) -> object:
+    if _path_matches_bundled_smoke(path):
+        return _doctor_report()
+    if _pipeline_uses_kimi_smoke_preflight(pipeline):
+        report = _doctor_report()
+        checks = list(getattr(report, "checks", []) or [])
+        if len(checks) == 1 and getattr(checks[0], "name", None) == "kimi_shell_helper":
+            return report
+        return build_local_kimi_bootstrap_doctor_report()
+    return _empty_doctor_report()
+
+
 def _empty_doctor_report() -> DoctorReport:
     return DoctorReport(status="ok", checks=[])
 
@@ -564,16 +577,15 @@ def _pipeline_launch_env_inheritance_checks(nodes: list[dict[str, object]]) -> l
 
 
 def _doctor_report_for_path(path: str | None = None) -> tuple[object, dict[str, object] | None, object | None]:
-    report = _doctor_report()
     if path is None:
+        report = _doctor_report()
         try:
             pipeline = _load_pipeline(default_smoke_pipeline_path())
         except typer.Exit:
             return report, None, None
         return _augment_preflight_report(report, pipeline), None, pipeline
     pipeline = _load_pipeline(path)
-    if not _path_matches_bundled_smoke(path) and not _pipeline_uses_kimi_smoke_preflight(pipeline):
-        report = _empty_doctor_report()
+    report = _preflight_base_report(path, pipeline)
     return _augment_preflight_report(report, pipeline), {"auto_preflight": _auto_smoke_preflight_metadata(path, pipeline)}, pipeline
 
 
@@ -945,10 +957,14 @@ def _load_pipeline_with_optional_smoke_preflight(
         if pipeline is None and preflight == SmokePreflightMode.ALWAYS and not selected_path_matches_bundled:
             pipeline = _load_pipeline(selected_path)
         preflight_pipeline = pipeline
-        report = _doctor_report()
         if pipeline is not None:
-            report = _augment_preflight_report(report, pipeline)
-        elif selected_path_matches_bundled and _status_value(getattr(report, "status", "ok")) != "failed":
+            base_report = _preflight_base_report(path or selected_path, pipeline)
+            if preflight == SmokePreflightMode.ALWAYS and not _path_matches_bundled_smoke(path or selected_path):
+                base_report = _doctor_report()
+            report = _augment_preflight_report(base_report, pipeline)
+        else:
+            report = _doctor_report()
+        if pipeline is None and selected_path_matches_bundled and _status_value(getattr(report, "status", "ok")) != "failed":
             preflight_pipeline = _load_pipeline(selected_path)
             report = _augment_preflight_report(report, preflight_pipeline)
         doctor_output = _structured_output_from_run_output(output)

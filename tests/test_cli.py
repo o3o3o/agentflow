@@ -5280,6 +5280,51 @@ nodes:
     ]
 
 
+def test_doctor_with_custom_kimi_pipeline_uses_pipeline_specific_preflight(tmp_path, monkeypatch):
+    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path.write_text(
+        """name: doctor-custom-kimi
+working_dir: .
+local_target_defaults:
+  bootstrap: kimi
+nodes:
+  - id: review
+    agent: claude
+    executable: custom-claude
+    provider: kimi
+    prompt: hi
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        agentflow.cli,
+        "build_local_smoke_doctor_report",
+        lambda: DoctorReport(
+            status="failed",
+            checks=[
+                DoctorCheck(name="codex", status="failed", detail="default codex smoke check should be ignored"),
+                DoctorCheck(name="claude", status="failed", detail="default claude smoke check should be ignored"),
+            ],
+        ),
+    )
+    monkeypatch.setattr(agentflow.cli, "build_local_kimi_bootstrap_doctor_report", _doctor_report)
+    monkeypatch.setattr(agentflow.cli, "build_pipeline_local_kimi_readiness_checks", lambda pipeline: [])
+    monkeypatch.setattr(agentflow.cli, "build_pipeline_local_claude_readiness_checks", lambda pipeline: [])
+    monkeypatch.setattr(agentflow.cli, "build_pipeline_local_codex_readiness_checks", lambda pipeline: [])
+    monkeypatch.setattr(agentflow.cli, "build_pipeline_local_codex_auth_checks", lambda pipeline: [])
+
+    result = runner.invoke(app, ["doctor", str(pipeline_path), "--output", "summary"])
+
+    assert result.exit_code == 0
+    assert result.stdout == (
+        "Doctor: ok\n"
+        "- kimi_shell_helper: ok - ready\n"
+        "Pipeline auto preflight: enabled - local Codex/Claude/Kimi nodes use a `kimi` shell bootstrap.\n"
+        "Pipeline auto preflight matches: review (claude) via `target.bootstrap`\n"
+    )
+
+
 def test_doctor_with_pipeline_path_warns_when_local_launch_inherits_current_base_url(tmp_path, monkeypatch):
     pipeline_path = tmp_path / "pipeline.yaml"
     pipeline_path.write_text(

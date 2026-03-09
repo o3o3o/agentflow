@@ -15,8 +15,6 @@ from agentflow.env import merge_env_layers
 from agentflow.local_shell import (
     kimi_shell_init_requires_bash_warning,
     kimi_shell_init_requires_interactive_bash_warning,
-    shell_command_uses_kimi_helper,
-    shell_init_uses_kimi_helper,
 )
 from agentflow.prepared import PreparedExecution, build_execution_paths
 from agentflow.runners.local import LocalRunner
@@ -1258,6 +1256,86 @@ def _check_kimi_shell_helper(home: Path | None = None) -> DoctorCheck:
     )
 
 
+def _check_kimi_bootstrap_helper(home: Path | None = None) -> DoctorCheck:
+    env = os.environ.copy()
+    if home is not None:
+        env["HOME"] = str(home)
+    expected_base_url = _EXPECTED_KIMI_ANTHROPIC_BASE_URL.rstrip("/")
+    script = "\n".join(
+        [
+            f"type {shlex.quote('kimi')} >/dev/null 2>&1 || exit {_KIMI_HELPER_MISSING_EXIT_CODE}",
+            "kimi >/dev/null || exit $?",
+            f'[ -n "${{ANTHROPIC_API_KEY:-}}" ] || exit {_KIMI_API_KEY_MISSING_EXIT_CODE}',
+            f'[ -n "${{ANTHROPIC_BASE_URL:-}}" ] || exit {_KIMI_BASE_URL_MISSING_EXIT_CODE}',
+            (
+                'if [ "${ANTHROPIC_BASE_URL%/}" != "'
+                f'{expected_base_url}'
+                '" ]; then '
+                'printf "%s" "${ANTHROPIC_BASE_URL:-}"; '
+                f'exit {_KIMI_BASE_URL_MISMATCH_EXIT_CODE}; '
+                'fi'
+            ),
+        ]
+    )
+    try:
+        result = subprocess.run(
+            ["bash", "-lic", script],
+            check=False,
+            capture_output=True,
+            env=env,
+            text=True,
+        )
+    except OSError as exc:
+        return DoctorCheck(
+            name="kimi_shell_helper",
+            status="failed",
+            detail=f"Could not launch `bash -lic` to verify `kimi`: {exc}",
+        )
+    if result.returncode == 0:
+        return DoctorCheck(
+            name="kimi_shell_helper",
+            status="ok",
+            detail=(
+                "`kimi` is available in `bash -lic`, exports `ANTHROPIC_API_KEY`, and sets "
+                f"`ANTHROPIC_BASE_URL={_EXPECTED_KIMI_ANTHROPIC_BASE_URL}`."
+            ),
+        )
+    if result.returncode == _KIMI_HELPER_MISSING_EXIT_CODE:
+        return DoctorCheck(
+            name="kimi_shell_helper",
+            status="failed",
+            detail="`kimi` is unavailable in `bash -lic`; add it to your bash startup files before running this local Kimi bootstrap.",
+        )
+    if result.returncode == _KIMI_API_KEY_MISSING_EXIT_CODE:
+        return DoctorCheck(
+            name="kimi_shell_helper",
+            status="failed",
+            detail="`kimi` runs in `bash -lic`, but it does not export `ANTHROPIC_API_KEY`.",
+        )
+    if result.returncode == _KIMI_BASE_URL_MISSING_EXIT_CODE:
+        return DoctorCheck(
+            name="kimi_shell_helper",
+            status="failed",
+            detail="`kimi` runs in `bash -lic`, but it does not export `ANTHROPIC_BASE_URL`.",
+        )
+    if result.returncode == _KIMI_BASE_URL_MISMATCH_EXIT_CODE:
+        actual_base_url = result.stdout.strip() or "<empty>"
+        return DoctorCheck(
+            name="kimi_shell_helper",
+            status="failed",
+            detail=(
+                "`kimi` runs in `bash -lic`, but `ANTHROPIC_BASE_URL` is "
+                f"`{actual_base_url}` instead of `{_EXPECTED_KIMI_ANTHROPIC_BASE_URL}`."
+            ),
+        )
+    detail = _format_shell_diagnostic(result.stderr) or f"exit status {result.returncode}"
+    return DoctorCheck(
+        name="kimi_shell_helper",
+        status="failed",
+        detail=f"`kimi` failed inside `bash -lic`: {detail}",
+    )
+
+
 def _reconcile_codex_executable_check(
     codex_check: DoctorCheck,
     kimi_check: DoctorCheck,
@@ -1334,3 +1412,8 @@ def build_local_smoke_doctor_report(home: Path | None = None) -> DoctorReport:
     else:
         status = "ok"
     return DoctorReport(status=status, checks=checks)
+
+
+def build_local_kimi_bootstrap_doctor_report(home: Path | None = None) -> DoctorReport:
+    kimi_check = _check_kimi_bootstrap_helper(home)
+    return DoctorReport(status=_status_value(kimi_check.status), checks=[kimi_check])

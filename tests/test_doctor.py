@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from agentflow.doctor import (
+    DoctorCheck,
     _check_claude_executable,
     _check_bash_login_startup,
     _should_probe_local_claude,
