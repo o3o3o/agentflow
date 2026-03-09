@@ -325,6 +325,93 @@ def test_verify_bundled_local_kimi_run_script_times_out_when_agentflow_hangs(tmp
     assert elapsed < 3
 
 
+def test_verify_custom_local_kimi_pipeline_script_reports_success(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+
+    pipeline_path = _copy_script(
+        repo_root / "scripts" / "verify-custom-local-kimi-pipeline.sh",
+        scripts_dir / "verify-custom-local-kimi-pipeline.sh",
+    )
+    _copy_script(
+        repo_root / "scripts" / "custom-local-kimi-helpers.sh",
+        scripts_dir / "custom-local-kimi-helpers.sh",
+    )
+    fake_pythonpath = _write_fake_agentflow_module(
+        tmp_path / "fake-pythonpath",
+        """
+        from __future__ import annotations
+
+        import json
+        import sys
+        from pathlib import Path
+
+        if len(sys.argv) > 2 and sys.argv[1] == "check-local":
+            pipeline_path = Path(sys.argv[2])
+            pipeline_name = pipeline_path.stem
+
+            run_payload = {
+                "status": "completed",
+                "pipeline": {"name": pipeline_name},
+                "nodes": [
+                    {"id": "codex_plan", "status": "completed", "preview": "codex ok"},
+                    {"id": "claude_review", "status": "completed", "preview": "claude ok"},
+                ],
+            }
+            preflight_payload = {
+                "status": "ok",
+                "checks": [
+                    {"name": "bash_login_startup", "status": "ok", "detail": "ready"},
+                    {"name": "kimi_shell_helper", "status": "ok", "detail": "ready"},
+                    {"name": "claude_ready", "status": "ok", "detail": "ready"},
+                    {"name": "codex_ready", "status": "ok", "detail": "ready"},
+                    {"name": "codex_auth", "status": "ok", "detail": "ready"},
+                    {
+                        "name": "bootstrap_env_override",
+                        "status": "ok",
+                        "detail": (
+                            "Node `claude_review`: Local shell bootstrap overrides current "
+                            "`ANTHROPIC_API_KEY` for this node via `target.bootstrap` (`kimi` helper)."
+                        ),
+                    },
+                ],
+                "pipeline": {
+                    "auto_preflight": {
+                        "enabled": True,
+                        "reason": "local Codex/Claude/Kimi nodes use a `kimi` shell bootstrap.",
+                        "match_summary": [
+                            "codex_plan (codex) via `target.bootstrap`",
+                            "claude_review (claude) via `target.bootstrap`",
+                        ],
+                    }
+                },
+            }
+
+            print(json.dumps(run_payload), flush=True)
+            print(json.dumps(preflight_payload), file=sys.stderr, flush=True)
+        """,
+    )
+
+    completed = subprocess.run(
+        ["bash", str(pipeline_path)],
+        capture_output=True,
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "AGENTFLOW_PYTHON": sys.executable,
+            "PYTHONPATH": str(fake_pythonpath),
+        },
+        text=True,
+        timeout=5,
+    )
+
+    assert completed.returncode == 0
+    assert "custom pipeline path:" in completed.stdout
+    assert "validated agentflow check-local json-summary stdout and preflight stderr" in completed.stdout
+    assert completed.stderr == ""
+
+
 def test_verify_local_kimi_stack_script_runs_steps_in_expected_order(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     scripts_dir = tmp_path / "scripts"

@@ -120,6 +120,5 @@ expected_matches = {
 if set(auto_preflight.get("match_summary") or []) != expected_matches:
     raise SystemExit(f"Unexpected auto preflight matches in stderr JSON: {preflight_payload}")
 
-if "status" in preflight_payload and "checks" in run_payload:
-    print("validated agentflow check-local json-summary stdout and preflight stderr")
+print("validated agentflow check-local json-summary stdout and preflight stderr")
 PY
