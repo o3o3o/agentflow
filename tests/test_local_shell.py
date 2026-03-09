@@ -327,6 +327,20 @@ def test_summarize_target_bash_login_startup_includes_transitive_bashrc_bridge(
     assert summarize_target_bash_login_startup(target) == "~/.profile -> ~/.bashrc"
 
 
+def test_summarize_target_bash_login_startup_prefers_bash_login_bridge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".bash_login").write_text('if [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi\n', encoding="utf-8")
+    (home / ".bashrc").write_text("kimi(){ :; }\n", encoding="utf-8")
+    monkeypatch.setattr("agentflow.local_shell.Path.home", lambda: home)
+    target = {"kind": "local", "shell": "bash", "shell_login": True}
+
+    assert summarize_target_bash_login_startup(target) == "~/.bash_login -> ~/.bashrc"
+
+
 def test_summarize_target_bash_login_startup_reports_missing_login_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     home = tmp_path / "home"
     home.mkdir()
@@ -431,6 +445,24 @@ def test_target_bash_login_startup_warning_reports_shadowed_profile_bridge(
     assert target_bash_login_startup_warning(target) == (
         "Bash login startup uses `~/.bash_profile`, so `~/.profile` will never run even though it references "
         "`~/.bashrc`; reference `~/.bashrc` or `~/.profile` from `~/.bash_profile`."
+    )
+
+
+def test_target_bash_login_startup_warning_reports_bash_login_shadowing_profile_bridge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".bash_login").write_text('export PATH="$HOME/bin:$PATH"\n', encoding="utf-8")
+    (home / ".profile").write_text('if [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi\n', encoding="utf-8")
+    (home / ".bashrc").write_text("kimi(){ :; }\n", encoding="utf-8")
+    monkeypatch.setattr("agentflow.local_shell.Path.home", lambda: home)
+    target = {"kind": "local", "shell": "bash", "shell_login": True}
+
+    assert target_bash_login_startup_warning(target) == (
+        "Bash login startup uses `~/.bash_login`, so `~/.profile` will never run even though it references "
+        "`~/.bashrc`; reference `~/.bashrc` or `~/.profile` from `~/.bash_login`."
     )
 
 

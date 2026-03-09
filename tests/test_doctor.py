@@ -879,6 +879,23 @@ def test_local_smoke_doctor_report_accepts_relative_bashrc_bridge(tmp_path: Path
     assert build_bash_login_shell_bridge_recommendation(home) is None
 
 
+def test_local_smoke_doctor_report_accepts_bash_login_bridge(tmp_path: Path):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".bash_login").write_text('if [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi\n', encoding="utf-8")
+    (home / ".bashrc").write_text("kimi(){ :; }\n", encoding="utf-8")
+
+    startup_check = _check_bash_login_startup(home)
+
+    assert startup_check.as_dict() == {
+        "name": "bash_login_startup",
+        "status": "ok",
+        "detail": "Bash login shells use `~/.bash_login`, and it references `~/.bashrc`.",
+        "context": _startup_context("~/.bash_login", "~/.bashrc", login_file="~/.bash_login", bashrc_exists=True),
+    }
+    assert build_bash_login_shell_bridge_recommendation(home) is None
+
+
 def test_local_smoke_doctor_report_accepts_symlinked_home_bashrc(tmp_path: Path, monkeypatch):
     home = tmp_path / "home"
     dotfiles = tmp_path / "dotfiles"
@@ -931,6 +948,30 @@ def test_local_smoke_doctor_report_follows_transitive_profile_bridge(tmp_path: P
         "status": "ok",
         "detail": "Bash login shells use `~/.bash_profile`, and it reaches `~/.bashrc` via `~/.profile`.",
         "context": _startup_context("~/.bash_profile", "~/.profile", "~/.bashrc", login_file="~/.bash_profile", bashrc_exists=True),
+    }
+
+
+def test_local_smoke_doctor_report_warns_when_bash_login_shadows_profile_bridge(tmp_path: Path):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".bash_login").write_text('export PATH="$HOME/bin:$PATH"\n', encoding="utf-8")
+    (home / ".profile").write_text('if [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi\n', encoding="utf-8")
+    (home / ".bashrc").write_text("kimi(){ :; }\n", encoding="utf-8")
+
+    startup_check = _check_bash_login_startup(home)
+
+    assert startup_check.as_dict() == {
+        "name": "bash_login_startup",
+        "status": "warning",
+        "detail": (
+            "Bash login shells use `~/.bash_login`, so `~/.profile` will never run even though it references "
+            "`~/.bashrc`; reference `~/.bashrc` or `~/.profile` from `~/.bash_login`."
+        ),
+        "context": _startup_context(
+            "~/.bash_login",
+            login_file="~/.bash_login",
+            shadowed_startup_chain=("~/.profile", "~/.bashrc"),
+        ),
     }
 
 
