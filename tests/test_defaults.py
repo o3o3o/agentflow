@@ -28,6 +28,8 @@ def test_bundled_templates_expose_descriptions_and_example_files():
     assert "fanout.exclude" in by_name["codex-fuzz-matrix-curated"].description
     assert by_name["codex-fuzz-matrix-128"].example_name == "fuzz/codex-fuzz-matrix-128.yaml"
     assert "128-shard Codex fuzz matrix" in by_name["codex-fuzz-matrix-128"].description
+    assert by_name["codex-fuzz-hierarchical-128"].example_name == "fuzz/codex-fuzz-hierarchical-128.yaml"
+    assert "per-target reducers" in by_name["codex-fuzz-hierarchical-128"].description
     assert by_name["codex-fuzz-matrix-manifest"].example_name == "fuzz/codex-fuzz-matrix-manifest.yaml"
     assert "fanout.matrix_path" in by_name["codex-fuzz-matrix-manifest"].description
     assert by_name["codex-fuzz-matrix-manifest"].support_files == ("manifests/codex-fuzz-matrix.axes.yaml",)
@@ -144,6 +146,11 @@ def test_bundled_codex_fuzz_matrix_curated_template_is_available():
 def test_bundled_codex_fuzz_matrix_128_template_is_available():
     assert "codex-fuzz-matrix-128" in bundled_template_names()
     assert "\nname: codex-fuzz-matrix-128\n" in f"\n{load_bundled_template_yaml('codex-fuzz-matrix-128')}"
+
+
+def test_bundled_codex_fuzz_hierarchical_128_template_is_available():
+    assert "codex-fuzz-hierarchical-128" in bundled_template_names()
+    assert "\nname: codex-fuzz-hierarchical-128\n" in f"\n{load_bundled_template_yaml('codex-fuzz-hierarchical-128')}"
 
 
 def test_bundled_codex_fuzz_matrix_manifest_template_is_available():
@@ -397,6 +404,36 @@ def test_bundled_codex_fuzz_matrix_128_pipeline_expands_into_128_concrete_nodes(
     assert pipeline.node_map["fuzzer_000"].target.cwd.endswith("codex_fuzz_matrix_128/agents/libpng_asan_seed_a_000")
     assert pipeline.node_map["merge"].depends_on[0] == "fuzzer_000"
     assert pipeline.node_map["merge"].depends_on[-1] == "fuzzer_127"
+
+
+def test_bundled_codex_fuzz_hierarchical_128_pipeline_expands_into_hierarchical_reducers():
+    pipeline = load_pipeline_from_path(str(bundled_template_path("codex-fuzz-hierarchical-128")))
+
+    assert pipeline.concurrency == 32
+    assert len(pipeline.fanouts["fuzzer"]) == 128
+    assert pipeline.fanouts["fuzzer"][:3] == ["fuzzer_000", "fuzzer_001", "fuzzer_002"]
+    assert pipeline.fanouts["fuzzer"][-1] == "fuzzer_127"
+    assert pipeline.node_map["fuzzer_000"].fanout_member["target"] == "libpng"
+    assert pipeline.node_map["fuzzer_000"].fanout_member["workspace"] == "agents/libpng_asan_seed_a_000"
+    assert len(pipeline.fanouts["family_merge"]) == 4
+    assert pipeline.fanouts["family_merge"] == [
+        "family_merge_0",
+        "family_merge_1",
+        "family_merge_2",
+        "family_merge_3",
+    ]
+    assert pipeline.node_map["family_merge_0"].fanout_member["target"] == "libpng"
+    assert pipeline.node_map["family_merge_3"].fanout_member["target"] == "sqlite"
+    assert '{% set target = "libpng" %}' in pipeline.node_map["family_merge_0"].prompt
+    assert "family.target" not in pipeline.node_map["family_merge_0"].prompt
+    assert pipeline.node_map["family_merge_0"].depends_on[0] == "fuzzer_000"
+    assert pipeline.node_map["family_merge_0"].depends_on[-1] == "fuzzer_127"
+    assert pipeline.node_map["merge"].depends_on == [
+        "family_merge_0",
+        "family_merge_1",
+        "family_merge_2",
+        "family_merge_3",
+    ]
 
 
 def test_bundled_codex_fuzz_matrix_manifest_pipeline_expands_into_64_concrete_nodes():

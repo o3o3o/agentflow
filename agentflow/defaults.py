@@ -600,6 +600,11 @@ _BUNDLED_TEMPLATES = (
         description="128-shard Codex fuzz matrix that uses `fanout.matrix` for target families, strategies, and seed buckets.",
     ),
     BundledTemplate(
+        name="codex-fuzz-hierarchical-128",
+        example_name="fuzz/codex-fuzz-hierarchical-128.yaml",
+        description="128-shard Codex fuzz matrix with per-target reducers that use fanout summaries to keep large merges readable.",
+    ),
+    BundledTemplate(
         name="codex-fuzz-matrix-manifest",
         example_name="fuzz/codex-fuzz-matrix-manifest.yaml",
         description="Configurable Codex fuzz matrix that keeps reusable axes in `fanout.matrix_path` and scales by rendering more seed buckets.",

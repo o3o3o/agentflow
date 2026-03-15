@@ -88,11 +88,12 @@ For a practical swarm authoring workflow, scaffold a ready-made Codex fuzz swarm
 ```bash
 agentflow init fuzz-swarm.yaml --template codex-fuzz-swarm
 agentflow init fuzz-128.yaml --template codex-fuzz-swarm --set shards=128 --set concurrency=32
+agentflow init fuzz-hierarchical-128.yaml --template codex-fuzz-hierarchical-128
 agentflow inspect fuzz-128.yaml --output summary
 ```
 
 The checked-in [`examples/fuzz/fuzz_codex_32.yaml`](/home/shou/agentflow/examples/fuzz/fuzz_codex_32.yaml) file is the default 32-shard starter rendered by that template. [`examples/fuzz/fuzz_codex_128.yaml`](/home/shou/agentflow/examples/fuzz/fuzz_codex_128.yaml) remains the fixed large-fanout reference when you want to inspect a full 128-node spec directly from the repo. When you want the same 128-shard scale with the axis catalog split into a support file, inspect [`examples/fuzz/codex-fuzz-matrix-manifest-128.yaml`](/home/shou/agentflow/examples/fuzz/codex-fuzz-matrix-manifest-128.yaml).
-The new manifest-backed scaffold lives at [`examples/fuzz/codex-fuzz-matrix-manifest.yaml`](/home/shou/agentflow/examples/fuzz/codex-fuzz-matrix-manifest.yaml) and is the default output of `agentflow init fuzz-matrix-manifest.yaml --template codex-fuzz-matrix-manifest`; raise `--set bucket_count=8 --set concurrency=32` when you want that same sidecar-manifest pattern at 128 shards without hand-editing the axes file.
+When that 128-shard scale also needs staged reducers, inspect [`examples/fuzz/codex-fuzz-hierarchical-128.yaml`](/home/shou/agentflow/examples/fuzz/codex-fuzz-hierarchical-128.yaml), which summarizes each target family before the final maintainer merge by using the `fanouts.<group>.summary`, `completed`, `failed`, and `with_output` prompt helpers. The manifest-backed scaffold lives at [`examples/fuzz/codex-fuzz-matrix-manifest.yaml`](/home/shou/agentflow/examples/fuzz/codex-fuzz-matrix-manifest.yaml) and is the default output of `agentflow init fuzz-matrix-manifest.yaml --template codex-fuzz-matrix-manifest`; raise `--set bucket_count=8 --set concurrency=32` when you want that same sidecar-manifest pattern at 128 shards without hand-editing the axes file.
 
 When each shard needs its own structured metadata, use `fanout.values` instead of `count`:
 
@@ -139,6 +140,32 @@ nodes:
     prompt: |
       Fuzz {{ shard.label }} inside {{ shard.workspace }}.
 ```
+
+For large fan-outs, prompt rendering also exposes reducer-friendly fanout subsets and counts. `fanouts.<group>.summary` carries per-status totals plus `with_output` / `without_output`, while `fanouts.<group>.completed`, `failed`, `with_output`, and `without_output` each expose the same `ids`, `size`, `nodes`, `outputs`, `final_responses`, `statuses`, and `values` fields as the full group.
+
+```yaml
+nodes:
+  - id: family_merge
+    fanout:
+      as: family
+      values:
+        - target: libpng
+        - target: sqlite
+    depends_on: [fuzz]
+    prompt: |
+      {% set target = "{{ family.target }}" %}
+      {% set target_outputs = fanouts.fuzz.with_output.nodes | selectattr("target", "equalto", target) | list %}
+      Completed shards: {{ fanouts.fuzz.summary.completed }}
+      Failed shards: {{ fanouts.fuzz.summary.failed }}
+
+      {% for shard in target_outputs %}
+      ## {{ shard.label }} :: {{ shard.id }}
+      {{ shard.output }}
+
+      {% endfor %}
+```
+
+When a later Jinja expression needs the fanout member itself, first freeze it into a plain string with a line such as `{% set target = "{{ family.target }}" %}`. Fan-out expansion rewrites the `{{ family.target }}` placeholder before runtime, while the surrounding `{% ... %}` logic still runs later with the normal prompt context.
 
 When a mostly-regular matrix needs a few real-world adjustments, keep the reusable axes and add `fanout.exclude` plus `fanout.include` before moving all the way to a CSV catalog:
 
@@ -245,6 +272,7 @@ Expansion rules:
 - Ordinary runtime prompt templates such as `{{ nodes.prepare.output }}` are left intact and still render at execution time.
 - A downstream `depends_on: [fuzz]` expands to all members of the `fuzz` group.
 - During prompt rendering, `fanouts.<group>.nodes` exposes the grouped member outputs with `id`, `status`, `output`, `final_response`, `stdout`, `stderr`, `trace`, and any preserved fanout member metadata such as `value`, `suffix`, `target`, `seed`, `workspace`, or `label`, plus convenience lists such as `fanouts.<group>.outputs` and `fanouts.<group>.values`.
+- Prompt rendering also exposes reducer-friendly subsets: `fanouts.<group>.summary` includes per-status totals plus `with_output` / `without_output`, `fanouts.<group>.status_counts` provides the raw mapping, and `fanouts.<group>.completed`, `failed`, `running`, `pending`, `queued`, `ready`, `retrying`, `cancelled`, `skipped`, `with_output`, and `without_output` each provide the same `ids` / `size` / `nodes` shape as the full group.
 
 Runtime numeric settings are validated up front: `concurrency` must be at least `1`, `timeout_seconds` must be greater than `0`, and both `retries` and `retry_backoff_seconds` must be non-negative.
 

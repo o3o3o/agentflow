@@ -325,6 +325,16 @@ def test_init_command_prints_codex_fuzz_matrix_128_template():
     assert "seed_bucket:" in result.stdout
 
 
+def test_init_command_prints_codex_fuzz_hierarchical_128_template():
+    result = runner.invoke(app, ["init", "--template", "codex-fuzz-hierarchical-128"])
+
+    assert result.exit_code == 0
+    assert "\nname: codex-fuzz-hierarchical-128\n" in f"\n{result.stdout}"
+    assert "family_merge" in result.stdout
+    assert "fanouts.fuzzer.summary.completed" in result.stdout
+    assert "fanouts.family_merge.with_output.nodes" in result.stdout
+
+
 def test_init_command_requires_destination_for_configurable_template_with_support_files():
     result = runner.invoke(app, ["init", "--template", "codex-fuzz-matrix-manifest"])
 
@@ -438,6 +448,8 @@ def test_templates_command_lists_bundled_templates():
         "(source: `examples/fuzz/codex-fuzz-matrix-curated.yaml`; use: `agentflow init --template codex-fuzz-matrix-curated`)\n"
         "- codex-fuzz-matrix-128: 128-shard Codex fuzz matrix that uses `fanout.matrix` for target families, strategies, and seed buckets. "
         "(source: `examples/fuzz/codex-fuzz-matrix-128.yaml`; use: `agentflow init --template codex-fuzz-matrix-128`)\n"
+        "- codex-fuzz-hierarchical-128: 128-shard Codex fuzz matrix with per-target reducers that use fanout summaries to keep large merges readable. "
+        "(source: `examples/fuzz/codex-fuzz-hierarchical-128.yaml`; use: `agentflow init --template codex-fuzz-hierarchical-128`)\n"
         "- codex-fuzz-matrix-manifest: Configurable Codex fuzz matrix that keeps reusable axes in `fanout.matrix_path` and scales by rendering more seed buckets. "
         "(params: `bucket_count=4`, `concurrency=16`, `name=codex-fuzz-matrix-manifest-<shards>`, `working_dir=./codex_fuzz_matrix_manifest_<shards>`; assets: `manifests/codex-fuzz-matrix.axes.yaml`; source: `examples/fuzz/codex-fuzz-matrix-manifest.yaml`; use: `agentflow init --template codex-fuzz-matrix-manifest`)\n"
         "- codex-fuzz-matrix-manifest-128: 128-shard Codex fuzz matrix that loads its axes from `fanout.matrix_path` for easier maintainer edits. "

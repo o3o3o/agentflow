@@ -27,6 +27,7 @@ agentflow init fuzz-matrix.yaml --template codex-fuzz-matrix
 agentflow init fuzz-matrix-derived.yaml --template codex-fuzz-matrix-derived
 agentflow init fuzz-matrix-curated.yaml --template codex-fuzz-matrix-curated
 agentflow init fuzz-matrix-128.yaml --template codex-fuzz-matrix-128
+agentflow init fuzz-hierarchical-128.yaml --template codex-fuzz-hierarchical-128
 agentflow init fuzz-matrix-manifest.yaml --template codex-fuzz-matrix-manifest
 agentflow init fuzz-matrix-manifest-128.yaml --template codex-fuzz-matrix-manifest --set bucket_count=8 --set concurrency=32
 agentflow init fuzz-catalog.yaml --template codex-fuzz-catalog
@@ -51,6 +52,7 @@ Choose a starter:
 - `codex-fuzz-matrix-derived` for heterogeneous campaigns that need reusable shard labels and workdirs
 - `codex-fuzz-matrix-curated` for heterogeneous campaigns that need a few exclusions or bespoke shards without a catalog
 - `codex-fuzz-matrix-128` for a full 128-shard matrix reference
+- `codex-fuzz-hierarchical-128` for 128-shard campaigns that should reduce by target family instead of one giant merge
 - `codex-fuzz-matrix-manifest` for heterogeneous campaigns whose reusable axes should live in a sidecar manifest
 - `codex-fuzz-matrix-manifest-128` for a fixed 128-shard manifest-backed reference
 - `codex-fuzz-catalog` for spreadsheet-friendly shard catalogs with explicit per-row metadata you cannot derive
@@ -217,6 +219,32 @@ nodes:
 
 Local runs create missing `target.cwd` directories automatically right before launch, so fan-out examples only need init steps for genuinely shared directories such as `docs/` or `crashes/`.
 
+When a single 128-shard reducer would be too noisy, prompt rendering also exposes `fanouts.<group>.summary` plus status and output subsets such as `fanouts.<group>.completed`, `fanouts.<group>.failed`, `fanouts.<group>.with_output`, and `fanouts.<group>.without_output`. Each subset keeps the same `ids`, `size`, `nodes`, `outputs`, `final_responses`, `statuses`, and `values` fields, which makes staged reducers easier to write:
+
+```yaml
+nodes:
+  - id: family_merge
+    fanout:
+      as: family
+      values:
+        - target: libpng
+        - target: sqlite
+    depends_on: [fuzzer]
+    prompt: |
+      {% set target = "{{ family.target }}" %}
+      {% set target_outputs = fanouts.fuzzer.with_output.nodes | selectattr("target", "equalto", target) | list %}
+      Completed shards: {{ fanouts.fuzzer.summary.completed }}
+      Failed shards: {{ fanouts.fuzzer.summary.failed }}
+
+      {% for shard in target_outputs %}
+      ## {{ shard.label }} :: {{ shard.id }}
+      {{ shard.output }}
+
+      {% endfor %}
+```
+
+When a later Jinja expression needs the fanout member itself, freeze it into a plain string first with a line such as `{% set target = "{{ family.target }}" %}` so fan-out expansion can rewrite the placeholder before runtime.
+
 When a mostly-regular matrix needs a few real-world adjustments, use `fanout.exclude` and `fanout.include` before moving all the way to a CSV catalog:
 
 ```yaml
@@ -259,7 +287,7 @@ nodes:
       Fuzz {{ shard.target }} with {{ shard.sanitizer }} using seed {{ shard.seed }}.
 ```
 
-See `examples/codex-fanout-repo-sweep.yaml` for a bundled maintainer-friendly review template, `examples/fuzz/codex-fuzz-matrix.yaml` for a baseline `fanout.matrix` fuzz starter, `examples/fuzz/codex-fuzz-matrix-derived.yaml` for the corresponding `fanout.derive` pattern with reusable labels and workdirs, `examples/fuzz/codex-fuzz-matrix-curated.yaml` for the `fanout.exclude` / `fanout.include` pattern that tunes a matrix without a sidecar catalog, `examples/fuzz/codex-fuzz-matrix-128.yaml` for a 128-shard inline matrix reference, `examples/fuzz/codex-fuzz-matrix-manifest.yaml` for the new configurable manifest-backed scaffold, `examples/fuzz/codex-fuzz-matrix-manifest-128.yaml` for the fixed 128-shard manifest-backed reference, `examples/fuzz/codex-fuzz-catalog.yaml` for a 128-shard CSV-backed shard catalog, `examples/fuzz/fuzz_codex_32.yaml` for the default right-sized Codex fuzz swarm, and `examples/fuzz/fuzz_codex_128.yaml` for the fixed 128-shard homogeneous reference swarm. The fuzz starters are scaffoldable via `agentflow init --template codex-fuzz-matrix`, `agentflow init --template codex-fuzz-matrix-derived`, `agentflow init --template codex-fuzz-matrix-curated`, `agentflow init --template codex-fuzz-matrix-128`, `agentflow init fuzz-matrix-manifest.yaml --template codex-fuzz-matrix-manifest`, `agentflow init fuzz-matrix-manifest-128.yaml --template codex-fuzz-matrix-manifest --set bucket_count=8 --set concurrency=32`, `agentflow init fuzz-catalog.yaml --template codex-fuzz-catalog`, `agentflow init --template codex-fuzz-swarm`, and `agentflow init --template codex-fuzz-swarm --set shards=128 --set concurrency=32`.
+See `examples/codex-fanout-repo-sweep.yaml` for a bundled maintainer-friendly review template, `examples/fuzz/codex-fuzz-matrix.yaml` for a baseline `fanout.matrix` fuzz starter, `examples/fuzz/codex-fuzz-matrix-derived.yaml` for the corresponding `fanout.derive` pattern with reusable labels and workdirs, `examples/fuzz/codex-fuzz-matrix-curated.yaml` for the `fanout.exclude` / `fanout.include` pattern that tunes a matrix without a sidecar catalog, `examples/fuzz/codex-fuzz-matrix-128.yaml` for a 128-shard inline matrix reference, `examples/fuzz/codex-fuzz-hierarchical-128.yaml` for the new staged 128-shard reducer pattern that relies on fanout summaries and per-target reducers, `examples/fuzz/codex-fuzz-matrix-manifest.yaml` for the configurable manifest-backed scaffold, `examples/fuzz/codex-fuzz-matrix-manifest-128.yaml` for the fixed 128-shard manifest-backed reference, `examples/fuzz/codex-fuzz-catalog.yaml` for a 128-shard CSV-backed shard catalog, `examples/fuzz/fuzz_codex_32.yaml` for the default right-sized Codex fuzz swarm, and `examples/fuzz/fuzz_codex_128.yaml` for the fixed 128-shard homogeneous reference swarm. The fuzz starters are scaffoldable via `agentflow init --template codex-fuzz-matrix`, `agentflow init --template codex-fuzz-matrix-derived`, `agentflow init --template codex-fuzz-matrix-curated`, `agentflow init --template codex-fuzz-matrix-128`, `agentflow init --template codex-fuzz-hierarchical-128`, `agentflow init fuzz-matrix-manifest.yaml --template codex-fuzz-matrix-manifest`, `agentflow init fuzz-matrix-manifest-128.yaml --template codex-fuzz-matrix-manifest --set bucket_count=8 --set concurrency=32`, `agentflow init fuzz-catalog.yaml --template codex-fuzz-catalog`, `agentflow init --template codex-fuzz-swarm`, and `agentflow init --template codex-fuzz-swarm --set shards=128 --set concurrency=32`.
 
 ## Docs
 
