@@ -38,8 +38,11 @@ class RenderedBundledTemplate:
 
 _DEFAULT_FUZZ_SWARM_SHARDS = 32
 _DEFAULT_FUZZ_SWARM_CONCURRENCY = 8
+_DEFAULT_FUZZ_MATRIX_MANIFEST_BUCKET_COUNT = 4
+_DEFAULT_FUZZ_MATRIX_MANIFEST_CONCURRENCY = 16
 _DEFAULT_FUZZ_CATALOG_SHARDS = 128
 _DEFAULT_FUZZ_CATALOG_CONCURRENCY = 32
+_FUZZ_MATRIX_MANIFEST_SUPPORT_FILE = "manifests/codex-fuzz-matrix.axes.yaml"
 _FUZZ_CATALOG_SUPPORT_FILE = "manifests/codex-fuzz-catalog.csv"
 _FUZZ_CATALOG_FAMILIES = (
     {"target": "libpng", "corpus": "png"},
@@ -85,6 +88,185 @@ def _validate_template_settings(template_name: str, raw_values: Mapping[str, str
 def _fanout_suffix(index: int, count: int) -> str:
     width = max(1, len(str(count - 1)))
     return f"{index:0{width}d}"
+
+
+def _fuzz_matrix_manifest_total_shards(bucket_count: int) -> int:
+    return len(_FUZZ_CATALOG_FAMILIES) * len(_FUZZ_CATALOG_STRATEGIES) * bucket_count
+
+
+def _render_codex_fuzz_matrix_manifest_axes(bucket_count: int) -> str:
+    lines: list[str] = ["family:"]
+    for family in _FUZZ_CATALOG_FAMILIES:
+        lines.extend(
+            (
+                f"  - target: {family['target']}",
+                f"    corpus: {family['corpus']}",
+            )
+        )
+
+    lines.append("strategy:")
+    for strategy in _FUZZ_CATALOG_STRATEGIES:
+        lines.extend(
+            (
+                f"  - sanitizer: {strategy['sanitizer']}",
+                f"    focus: {strategy['focus']}",
+            )
+        )
+
+    lines.append("seed_bucket:")
+    for index in range(bucket_count):
+        lines.extend(
+            (
+                f"  - bucket: seed_{index + 1:03d}",
+                f"    seed: {4101 + index}",
+            )
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _render_codex_fuzz_matrix_manifest_template(values: Mapping[str, str] | None = None) -> RenderedBundledTemplate:
+    template_name = "codex-fuzz-matrix-manifest"
+    raw_values = dict(values or {})
+    allowed = {"bucket_count", "concurrency", "name", "working_dir"}
+    _validate_template_settings(template_name, raw_values, allowed=allowed)
+
+    bucket_count = _parse_positive_template_int(
+        template_name,
+        "bucket_count",
+        raw_values.get("bucket_count", str(_DEFAULT_FUZZ_MATRIX_MANIFEST_BUCKET_COUNT)),
+    )
+    concurrency = _parse_positive_template_int(
+        template_name,
+        "concurrency",
+        raw_values.get("concurrency", str(_DEFAULT_FUZZ_MATRIX_MANIFEST_CONCURRENCY)),
+    )
+    total_shards = _fuzz_matrix_manifest_total_shards(bucket_count)
+    name = _template_string_value(
+        template_name,
+        "name",
+        raw_values.get("name"),
+        default=f"codex-fuzz-matrix-manifest-{total_shards}",
+    )
+    working_dir = _template_string_value(
+        template_name,
+        "working_dir",
+        raw_values.get("working_dir"),
+        default=f"./codex_fuzz_matrix_manifest_{total_shards}",
+    )
+
+    rendered_yaml = Template(
+        """# Configurable Codex fuzz matrix with manifest-backed axes
+#
+# This scaffold keeps the reusable target, strategy, and seed-bucket axes in a
+# sidecar manifest while still letting maintainers scale the campaign up or down
+# without hand-editing both files from scratch.
+#
+# Usage:
+#   agentflow init fuzz-matrix-manifest.yaml --template codex-fuzz-matrix-manifest
+#   agentflow init fuzz-matrix-manifest-128.yaml --template codex-fuzz-matrix-manifest --set bucket_count=8 --set concurrency=32
+#   agentflow inspect fuzz-matrix-manifest.yaml --output summary
+#   agentflow run fuzz-matrix-manifest.yaml --preflight never
+
+name: $name
+description: Configurable $total_shards-shard Codex fuzz matrix backed by a manifest sidecar with reusable axes, derived labels, and per-shard workdirs.
+working_dir: $working_dir
+concurrency: $concurrency
+
+nodes:
+  - id: init
+    agent: codex
+    tools: read_write
+    timeout_seconds: 60
+    prompt: |
+      Create the following directory structure silently if it does not already exist:
+        mkdir -p docs crashes
+      If crashes/README.md is missing or empty, create it with:
+        # Crash Registry
+        | Timestamp | Label | Target | Sanitizer | Evidence | Artifact |
+        |---|---|---|---|---|---|
+      If docs/campaign_notes.md is missing or empty, create it with:
+        # Campaign Notes
+        Use this file only for cross-shard lessons and retargeting guidance.
+      Then respond with exactly: INIT_OK
+
+    success_criteria:
+      - kind: output_contains
+        value: INIT_OK
+
+  - id: fuzzer
+    fanout:
+      as: shard
+      matrix_path: $_FUZZ_MATRIX_MANIFEST_SUPPORT_FILE
+      derive:
+        label: "{{ shard.target }}/{{ shard.sanitizer }}/{{ shard.focus }}/{{ shard.bucket }}"
+        workspace: "agents/{{ shard.target }}_{{ shard.sanitizer }}_{{ shard.bucket }}_{{ shard.suffix }}"
+    agent: codex
+    model: gpt-5-codex
+    tools: read_write
+    depends_on: [init]
+    target:
+      kind: local
+      cwd: "{{ shard.workspace }}"
+    timeout_seconds: 3600
+    retries: 2
+    retry_backoff_seconds: 2
+    extra_args:
+      - "--search"
+      - "-c"
+      - 'model_reasoning_effort="high"'
+    prompt: |
+      You are Codex fuzz shard {{ shard.number }} of {{ shard.count }} in an authorized campaign.
+
+      Campaign inputs:
+      - Label: {{ shard.label }}
+      - Target: {{ shard.target }}
+      - Corpus family: {{ shard.corpus }}
+      - Sanitizer: {{ shard.sanitizer }}
+      - Strategy focus: {{ shard.focus }}
+      - Seed bucket: {{ shard.bucket }}
+      - Seed: {{ shard.seed }}
+      - Workspace: {{ shard.workspace }}
+
+      Shard contract:
+      - Stay within {{ shard.workspace }} unless you are appending to the shared crash registry or notes.
+      - Treat `$_FUZZ_MATRIX_MANIFEST_SUPPORT_FILE` as the source of truth for the reusable campaign axes.
+      - Use the label, target family, sanitizer, focus, and seed bucket to keep the campaign reproducible.
+      - Prefer high-signal crashers, assertion failures, memory safety bugs, or logic corruptions.
+      - Record confirmed findings in `crashes/README.md` and copy minimal repro artifacts into `crashes/`.
+      - Add short cross-shard lessons to `docs/campaign_notes.md` when they help other shards avoid duplicate work.
+
+  - id: merge
+    agent: codex
+    model: gpt-5-codex
+    tools: read_only
+    depends_on: [fuzzer]
+    timeout_seconds: 300
+    prompt: |
+      Consolidate this $total_shards-shard manifest-backed fuzz matrix into a maintainer handoff.
+      Group the findings by target family first, then by sanitizer/focus, and end with seed buckets that need retargeting.
+
+      {% for shard in fanouts.fuzzer.nodes %}
+      ### {{ shard.label }} :: {{ shard.id }} (status: {{ shard.status }})
+      {{ shard.output or "(no output)" }}
+
+      {% endfor %}
+"""
+    ).substitute(
+        name=name,
+        total_shards=total_shards,
+        working_dir=working_dir,
+        concurrency=concurrency,
+        _FUZZ_MATRIX_MANIFEST_SUPPORT_FILE=_FUZZ_MATRIX_MANIFEST_SUPPORT_FILE,
+    )
+    return RenderedBundledTemplate(
+        yaml=rendered_yaml,
+        support_files=(
+            RenderedBundledTemplateFile(
+                relative_path=_FUZZ_MATRIX_MANIFEST_SUPPORT_FILE,
+                content=_render_codex_fuzz_matrix_manifest_axes(bucket_count),
+            ),
+        ),
+    )
 
 
 def _render_codex_fuzz_swarm_template(values: Mapping[str, str] | None = None) -> RenderedBundledTemplate:
@@ -418,6 +600,34 @@ _BUNDLED_TEMPLATES = (
         description="128-shard Codex fuzz matrix that uses `fanout.matrix` for target families, strategies, and seed buckets.",
     ),
     BundledTemplate(
+        name="codex-fuzz-matrix-manifest",
+        example_name="fuzz/codex-fuzz-matrix-manifest.yaml",
+        description="Configurable Codex fuzz matrix that keeps reusable axes in `fanout.matrix_path` and scales by rendering more seed buckets.",
+        parameters=(
+            BundledTemplateParameter(
+                name="bucket_count",
+                description="Number of reusable seed buckets to render into the sidecar manifest.",
+                default=str(_DEFAULT_FUZZ_MATRIX_MANIFEST_BUCKET_COUNT),
+            ),
+            BundledTemplateParameter(
+                name="concurrency",
+                description="Maximum number of shards to run in parallel.",
+                default=str(_DEFAULT_FUZZ_MATRIX_MANIFEST_CONCURRENCY),
+            ),
+            BundledTemplateParameter(
+                name="name",
+                description="Pipeline name override.",
+                default="codex-fuzz-matrix-manifest-<shards>",
+            ),
+            BundledTemplateParameter(
+                name="working_dir",
+                description="Pipeline working directory override.",
+                default="./codex_fuzz_matrix_manifest_<shards>",
+            ),
+        ),
+        support_files=(_FUZZ_MATRIX_MANIFEST_SUPPORT_FILE,),
+    ),
+    BundledTemplate(
         name="codex-fuzz-matrix-manifest-128",
         example_name="fuzz/codex-fuzz-matrix-manifest-128.yaml",
         description="128-shard Codex fuzz matrix that loads its axes from `fanout.matrix_path` for easier maintainer edits.",
@@ -503,6 +713,7 @@ _BUNDLED_TEMPLATES = (
 _BUNDLED_TEMPLATE_FILES = {template.name: template.example_name for template in _BUNDLED_TEMPLATES}
 _BUNDLED_TEMPLATE_SUPPORT_FILES = {template.name: template.support_files for template in _BUNDLED_TEMPLATES}
 _BUNDLED_TEMPLATE_RENDERERS = {
+    "codex-fuzz-matrix-manifest": _render_codex_fuzz_matrix_manifest_template,
     "codex-fuzz-catalog": _render_codex_fuzz_catalog_template,
     "codex-fuzz-swarm": _render_codex_fuzz_swarm_template,
 }

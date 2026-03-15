@@ -325,6 +325,13 @@ def test_init_command_prints_codex_fuzz_matrix_128_template():
     assert "seed_bucket:" in result.stdout
 
 
+def test_init_command_requires_destination_for_configurable_template_with_support_files():
+    result = runner.invoke(app, ["init", "--template", "codex-fuzz-matrix-manifest"])
+
+    assert result.exit_code == 1
+    assert result.stderr == "Template `codex-fuzz-matrix-manifest` includes support files and requires a destination path.\n"
+
+
 def test_init_command_requires_destination_for_template_with_support_files():
     result = runner.invoke(app, ["init", "--template", "codex-fuzz-matrix-manifest-128"])
 
@@ -431,6 +438,8 @@ def test_templates_command_lists_bundled_templates():
         "(source: `examples/fuzz/codex-fuzz-matrix-curated.yaml`; use: `agentflow init --template codex-fuzz-matrix-curated`)\n"
         "- codex-fuzz-matrix-128: 128-shard Codex fuzz matrix that uses `fanout.matrix` for target families, strategies, and seed buckets. "
         "(source: `examples/fuzz/codex-fuzz-matrix-128.yaml`; use: `agentflow init --template codex-fuzz-matrix-128`)\n"
+        "- codex-fuzz-matrix-manifest: Configurable Codex fuzz matrix that keeps reusable axes in `fanout.matrix_path` and scales by rendering more seed buckets. "
+        "(params: `bucket_count=4`, `concurrency=16`, `name=codex-fuzz-matrix-manifest-<shards>`, `working_dir=./codex_fuzz_matrix_manifest_<shards>`; assets: `manifests/codex-fuzz-matrix.axes.yaml`; source: `examples/fuzz/codex-fuzz-matrix-manifest.yaml`; use: `agentflow init --template codex-fuzz-matrix-manifest`)\n"
         "- codex-fuzz-matrix-manifest-128: 128-shard Codex fuzz matrix that loads its axes from `fanout.matrix_path` for easier maintainer edits. "
         "(assets: `manifests/codex-fuzz-matrix-manifest-128.axes.yaml`; source: `examples/fuzz/codex-fuzz-matrix-manifest-128.yaml`; use: `agentflow init --template codex-fuzz-matrix-manifest-128`)\n"
         "- codex-fuzz-catalog: Configurable Codex fuzz campaign backed by a CSV shard catalog; defaults to 128 shards and keeps per-shard labels and workdirs in the manifest. "
@@ -461,14 +470,34 @@ def test_init_command_writes_selected_template_to_destination(tmp_path):
 def test_init_command_writes_selected_template_and_support_files_to_destination(tmp_path):
     destination = tmp_path / "templates" / "fuzz-matrix-manifest.yaml"
 
-    result = runner.invoke(app, ["init", str(destination), "--template", "codex-fuzz-matrix-manifest-128"])
+    result = runner.invoke(
+        app,
+        [
+            "init",
+            str(destination),
+            "--template",
+            "codex-fuzz-matrix-manifest",
+            "--set",
+            "bucket_count=8",
+            "--set",
+            "concurrency=32",
+            "--set",
+            "name=custom-matrix-manifest-128",
+            "--set",
+            "working_dir=./custom_matrix_manifest",
+        ],
+    )
 
     assert result.exit_code == 0
-    assert result.stdout == f"Wrote `codex-fuzz-matrix-manifest-128` template to `{destination}`.\n"
-    assert "\nname: codex-fuzz-matrix-manifest-128\n" in f"\n{destination.read_text(encoding='utf-8')}"
-    support_file = destination.parent / "manifests" / "codex-fuzz-matrix-manifest-128.axes.yaml"
+    assert result.stdout == f"Wrote `codex-fuzz-matrix-manifest` template to `{destination}`.\n"
+    rendered_yaml = destination.read_text(encoding="utf-8")
+    assert "\nname: custom-matrix-manifest-128\n" in f"\n{rendered_yaml}"
+    assert "concurrency: 32" in rendered_yaml
+    support_file = destination.parent / "manifests" / "codex-fuzz-matrix.axes.yaml"
     assert support_file.exists()
-    assert "seed_bucket:" in support_file.read_text(encoding="utf-8")
+    support_text = support_file.read_text(encoding="utf-8")
+    assert "seed_bucket:" in support_text
+    assert "seed_008" in support_text
 
 
 def test_init_command_writes_rendered_template_and_support_files_to_destination(tmp_path):
@@ -519,11 +548,11 @@ def test_init_command_refuses_to_overwrite_existing_file_without_force(tmp_path)
 
 def test_init_command_refuses_to_overwrite_existing_support_file_without_force(tmp_path):
     destination = tmp_path / "templates" / "fuzz-matrix-manifest.yaml"
-    support_file = destination.parent / "manifests" / "codex-fuzz-matrix-manifest-128.axes.yaml"
+    support_file = destination.parent / "manifests" / "codex-fuzz-matrix.axes.yaml"
     support_file.parent.mkdir(parents=True)
     support_file.write_text("keep-me\n", encoding="utf-8")
 
-    result = runner.invoke(app, ["init", str(destination), "--template", "codex-fuzz-matrix-manifest-128"])
+    result = runner.invoke(app, ["init", str(destination), "--template", "codex-fuzz-matrix-manifest"])
 
     assert result.exit_code == 1
     assert result.stderr == f"Destination `{support_file}` already exists. Use `--force` to overwrite it.\n"

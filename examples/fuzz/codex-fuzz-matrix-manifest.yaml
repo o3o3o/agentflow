@@ -1,0 +1,95 @@
+# Configurable Codex fuzz matrix with manifest-backed axes
+#
+# This scaffold keeps the reusable target, strategy, and seed-bucket axes in a
+# sidecar manifest while still letting maintainers scale the campaign up or down
+# without hand-editing both files from scratch.
+#
+# Usage:
+#   agentflow init fuzz-matrix-manifest.yaml --template codex-fuzz-matrix-manifest
+#   agentflow init fuzz-matrix-manifest-128.yaml --template codex-fuzz-matrix-manifest --set bucket_count=8 --set concurrency=32
+#   agentflow inspect fuzz-matrix-manifest.yaml --output summary
+#   agentflow run fuzz-matrix-manifest.yaml --preflight never
+
+name: codex-fuzz-matrix-manifest-64
+description: Configurable 64-shard Codex fuzz matrix backed by a manifest sidecar with reusable axes, derived labels, and per-shard workdirs.
+working_dir: ./codex_fuzz_matrix_manifest_64
+concurrency: 16
+
+nodes:
+  - id: init
+    agent: codex
+    tools: read_write
+    timeout_seconds: 60
+    prompt: |
+      Create the following directory structure silently if it does not already exist:
+        mkdir -p docs crashes
+      If crashes/README.md is missing or empty, create it with:
+        # Crash Registry
+        | Timestamp | Label | Target | Sanitizer | Evidence | Artifact |
+        |---|---|---|---|---|---|
+      If docs/campaign_notes.md is missing or empty, create it with:
+        # Campaign Notes
+        Use this file only for cross-shard lessons and retargeting guidance.
+      Then respond with exactly: INIT_OK
+
+    success_criteria:
+      - kind: output_contains
+        value: INIT_OK
+
+  - id: fuzzer
+    fanout:
+      as: shard
+      matrix_path: manifests/codex-fuzz-matrix.axes.yaml
+      derive:
+        label: "{{ shard.target }}/{{ shard.sanitizer }}/{{ shard.focus }}/{{ shard.bucket }}"
+        workspace: "agents/{{ shard.target }}_{{ shard.sanitizer }}_{{ shard.bucket }}_{{ shard.suffix }}"
+    agent: codex
+    model: gpt-5-codex
+    tools: read_write
+    depends_on: [init]
+    target:
+      kind: local
+      cwd: "{{ shard.workspace }}"
+    timeout_seconds: 3600
+    retries: 2
+    retry_backoff_seconds: 2
+    extra_args:
+      - "--search"
+      - "-c"
+      - 'model_reasoning_effort="high"'
+    prompt: |
+      You are Codex fuzz shard {{ shard.number }} of {{ shard.count }} in an authorized campaign.
+
+      Campaign inputs:
+      - Label: {{ shard.label }}
+      - Target: {{ shard.target }}
+      - Corpus family: {{ shard.corpus }}
+      - Sanitizer: {{ shard.sanitizer }}
+      - Strategy focus: {{ shard.focus }}
+      - Seed bucket: {{ shard.bucket }}
+      - Seed: {{ shard.seed }}
+      - Workspace: {{ shard.workspace }}
+
+      Shard contract:
+      - Stay within {{ shard.workspace }} unless you are appending to the shared crash registry or notes.
+      - Treat `manifests/codex-fuzz-matrix.axes.yaml` as the source of truth for the reusable campaign axes.
+      - Use the label, target family, sanitizer, focus, and seed bucket to keep the campaign reproducible.
+      - Prefer high-signal crashers, assertion failures, memory safety bugs, or logic corruptions.
+      - Record confirmed findings in `crashes/README.md` and copy minimal repro artifacts into `crashes/`.
+      - Add short cross-shard lessons to `docs/campaign_notes.md` when they help other shards avoid duplicate work.
+
+  - id: merge
+    agent: codex
+    model: gpt-5-codex
+    tools: read_only
+    depends_on: [fuzzer]
+    timeout_seconds: 300
+    prompt: |
+      Consolidate this 64-shard manifest-backed fuzz matrix into a maintainer handoff.
+      Group the findings by target family first, then by sanitizer/focus, and end with seed buckets that need retargeting.
+
+      {% for shard in fanouts.fuzzer.nodes %}
+      ### {{ shard.label }} :: {{ shard.id }} (status: {{ shard.status }})
+      {{ shard.output or "(no output)" }}
+
+      {% endfor %}
