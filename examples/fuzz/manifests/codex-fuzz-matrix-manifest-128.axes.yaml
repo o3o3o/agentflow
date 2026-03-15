@@ -1,0 +1,35 @@
+family:
+  - target: libpng
+    corpus: png
+  - target: libjpeg
+    corpus: jpeg
+  - target: freetype
+    corpus: fonts
+  - target: sqlite
+    corpus: sql
+strategy:
+  - sanitizer: asan
+    focus: parser
+  - sanitizer: asan
+    focus: structure-aware
+  - sanitizer: ubsan
+    focus: differential
+  - sanitizer: ubsan
+    focus: stateful
+seed_bucket:
+  - bucket: seed_a
+    seed: 4101
+  - bucket: seed_b
+    seed: 4102
+  - bucket: seed_c
+    seed: 4103
+  - bucket: seed_d
+    seed: 4104
+  - bucket: seed_e
+    seed: 4105
+  - bucket: seed_f
+    seed: 4106
+  - bucket: seed_g
+    seed: 4107
+  - bucket: seed_h
+    seed: 4108

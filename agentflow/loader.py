@@ -22,8 +22,10 @@ def load_pipeline_from_text(data: str, *, base_dir: str | Path | None = None) ->
 
 def load_pipeline_from_data(data: Any, *, base_dir: str | Path | None = None) -> PipelineSpec:
     if isinstance(data, dict) and base_dir is not None:
-        data = expand_compact_nodes(data)
-        data = _resolve_file_relative_paths(data, _resolve_base_dir(base_dir))
+        resolved_base_dir = _resolve_base_dir(base_dir)
+        data = expand_compact_nodes(data, base_dir=resolved_base_dir)
+        data = _resolve_file_relative_paths(data, resolved_base_dir)
+        data = {**data, "base_dir": str(resolved_base_dir)}
     return PipelineSpec.model_validate(data)
 
 

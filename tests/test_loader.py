@@ -217,3 +217,83 @@ nodes:
     assert pipeline.nodes[1].target.cwd == str((workspace / "agents" / "libpng" / "ubsan" / "1").resolve())
     assert pipeline.nodes[2].target.cwd == str((workspace / "agents" / "sqlite" / "asan" / "2").resolve())
     assert pipeline.nodes[3].target.cwd == str((workspace / "agents" / "sqlite" / "ubsan" / "3").resolve())
+
+
+def test_load_pipeline_from_path_expands_fanout_values_path_before_resolving_relative_cwds(tmp_path):
+    workspace = tmp_path / "workspace"
+    manifests = workspace / "manifests"
+    manifests.mkdir(parents=True)
+    (manifests / "shards.csv").write_text(
+        "target,seed\nlibpng,1001\nsqlite,2002\n",
+        encoding="utf-8",
+    )
+    pipeline_path = workspace / "pipeline.yaml"
+    pipeline_path.write_text(
+        """name: fanout-values-path-loader
+working_dir: .
+nodes:
+  - id: fuzz
+    fanout:
+      as: shard
+      values_path: manifests/shards.csv
+    agent: codex
+    prompt: shard {{ shard.target }} {{ shard.seed }}
+    target:
+      kind: local
+      cwd: agents/{{ shard.target }}/{{ shard.suffix }}
+""",
+        encoding="utf-8",
+    )
+
+    pipeline = load_pipeline_from_path(pipeline_path)
+
+    assert pipeline.fanouts == {"fuzz": ["fuzz_0", "fuzz_1"]}
+    assert [node.id for node in pipeline.nodes] == ["fuzz_0", "fuzz_1"]
+    assert pipeline.nodes[0].prompt == "shard libpng 1001"
+    assert pipeline.nodes[1].prompt == "shard sqlite 2002"
+    assert pipeline.nodes[0].target.cwd == str((workspace / "agents" / "libpng" / "0").resolve())
+    assert pipeline.nodes[1].target.cwd == str((workspace / "agents" / "sqlite" / "1").resolve())
+
+
+def test_load_pipeline_from_path_expands_fanout_matrix_path_before_resolving_relative_cwds(tmp_path):
+    workspace = tmp_path / "workspace"
+    manifests = workspace / "manifests"
+    manifests.mkdir(parents=True)
+    (manifests / "axes.yaml").write_text(
+        """family:
+  - target: libpng
+  - target: sqlite
+variant:
+  - sanitizer: asan
+  - sanitizer: ubsan
+""",
+        encoding="utf-8",
+    )
+    pipeline_path = workspace / "pipeline.yaml"
+    pipeline_path.write_text(
+        """name: fanout-matrix-path-loader
+working_dir: .
+nodes:
+  - id: fuzz
+    fanout:
+      as: shard
+      matrix_path: manifests/axes.yaml
+    agent: codex
+    prompt: shard {{ shard.target }} {{ shard.sanitizer }}
+    target:
+      kind: local
+      cwd: agents/{{ shard.target }}/{{ shard.sanitizer }}/{{ shard.suffix }}
+""",
+        encoding="utf-8",
+    )
+
+    pipeline = load_pipeline_from_path(pipeline_path)
+
+    assert pipeline.fanouts == {"fuzz": ["fuzz_0", "fuzz_1", "fuzz_2", "fuzz_3"]}
+    assert [node.id for node in pipeline.nodes] == ["fuzz_0", "fuzz_1", "fuzz_2", "fuzz_3"]
+    assert pipeline.nodes[0].prompt == "shard libpng asan"
+    assert pipeline.nodes[1].prompt == "shard libpng ubsan"
+    assert pipeline.nodes[2].prompt == "shard sqlite asan"
+    assert pipeline.nodes[3].prompt == "shard sqlite ubsan"
+    assert pipeline.nodes[0].target.cwd == str((workspace / "agents" / "libpng" / "asan" / "0").resolve())
+    assert pipeline.nodes[3].target.cwd == str((workspace / "agents" / "sqlite" / "ubsan" / "3").resolve())

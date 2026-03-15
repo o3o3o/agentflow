@@ -37,7 +37,7 @@ See `examples/airflow_like.py` for a complete runnable example.
 Each node supports:
 
 - `agent`: `codex`, `claude`, or `kimi`
-- `fanout`: expand one node definition into concrete nodes before validation; accepts `count`, `values`, or `matrix`, plus optional `as`
+- `fanout`: expand one node definition into concrete nodes before validation; accepts `count`, `values`, `values_path`, `matrix`, or `matrix_path`, plus optional `as`
 - `model`: any model string understood by the backend
 - `provider`: a string or a structured provider config with `base_url`, `api_key_env`, headers, and env
 - `tools`: `read_only` or `read_write`
@@ -91,7 +91,7 @@ agentflow init fuzz-128.yaml --template codex-fuzz-swarm --set shards=128 --set 
 agentflow inspect fuzz-128.yaml --output summary
 ```
 
-The checked-in [`examples/fuzz/fuzz_codex_32.yaml`](/home/shou/agentflow/examples/fuzz/fuzz_codex_32.yaml) file is the default 32-shard starter rendered by that template. [`examples/fuzz/fuzz_codex_128.yaml`](/home/shou/agentflow/examples/fuzz/fuzz_codex_128.yaml) remains the fixed large-fanout reference when you want to inspect a full 128-node spec directly from the repo.
+The checked-in [`examples/fuzz/fuzz_codex_32.yaml`](/home/shou/agentflow/examples/fuzz/fuzz_codex_32.yaml) file is the default 32-shard starter rendered by that template. [`examples/fuzz/fuzz_codex_128.yaml`](/home/shou/agentflow/examples/fuzz/fuzz_codex_128.yaml) remains the fixed large-fanout reference when you want to inspect a full 128-node spec directly from the repo. When you want the same 128-shard scale with the axis catalog split into a support file, inspect [`examples/fuzz/codex-fuzz-matrix-manifest-128.yaml`](/home/shou/agentflow/examples/fuzz/codex-fuzz-matrix-manifest-128.yaml).
 
 When each shard needs its own structured metadata, use `fanout.values` instead of `count`:
 
@@ -107,6 +107,30 @@ nodes:
         - target: sqlite
           sanitizer: ubsan
           seed: 2202
+    agent: codex
+    prompt: |
+      Fuzz {{ shard.target }} with {{ shard.sanitizer }} using seed {{ shard.seed }}.
+```
+
+When that metadata already lives in a maintainer-owned file, point `fanout.values_path` or `fanout.matrix_path` at it instead of inlining the whole catalog in the pipeline. `values_path` accepts JSON/YAML lists and CSV rows; `matrix_path` accepts JSON/YAML objects with axis lists. Relative paths resolve from the pipeline file, not from `working_dir`.
+
+```yaml
+nodes:
+  - id: fuzz
+    fanout:
+      as: shard
+      values_path: manifests/shards.csv
+    agent: codex
+    prompt: |
+      Fuzz {{ shard.target }} with seed {{ shard.seed }}.
+```
+
+```yaml
+nodes:
+  - id: fuzz
+    fanout:
+      as: shard
+      matrix_path: manifests/campaign.axes.yaml
     agent: codex
     prompt: |
       Fuzz {{ shard.target }} with {{ shard.sanitizer }} using seed {{ shard.seed }}.
@@ -147,10 +171,12 @@ nodes:
 
 Expansion rules:
 
-- A fan-out node accepts exactly one expansion mode: `count` for homogeneous numeric shards, `values` for explicit per-member metadata, or `matrix` for cartesian-product sweeps.
+- A fan-out node accepts exactly one expansion mode: `count` for homogeneous numeric shards, `values` or `values_path` for explicit per-member metadata, or `matrix` or `matrix_path` for cartesian-product sweeps.
 - A fan-out node with `id: fuzz` and `count: 8` expands to `fuzz_0` through `fuzz_7`. The suffix is zero-padded when the fan-out size needs it, so `count: 128` becomes `fuzz_000` through `fuzz_127`.
 - When `fanout.values` is used, `count` becomes the list length, `value` holds the raw item, and dictionary item keys with identifier-friendly names are also exposed directly on the alias. That lets `{{ shard.value.seed }}` and `{{ shard.seed }}` both work for `values: [{seed: 1101}]`.
+- `fanout.values_path` behaves the same way after AgentFlow loads the referenced list or CSV rows.
 - When `fanout.matrix` is used, AgentFlow expands the cartesian product of every axis in declaration order. Each axis item is available under its axis name, and dictionary axis items also lift their identifier-friendly keys onto the alias. That lets `{{ shard.family.target }}` and `{{ shard.target }}` both work when `family` axis items are dictionaries.
+- `fanout.matrix_path` behaves the same way after AgentFlow loads the referenced JSON/YAML object.
 - `fanout.as` picks the template variable name for pre-validation substitution. AgentFlow currently expands dotted placeholders rooted at that alias or `fanout`, such as `{{ shard.number }}`, `{{ shard.suffix }}`, `{{ fanout.count }}`, `target.cwd: agents/agent_{{ shard.suffix }}`, or `depends_on: ["prepare_{{ shard.suffix }}"]`.
 - Ordinary runtime prompt templates such as `{{ nodes.prepare.output }}` are left intact and still render at execution time.
 - A downstream `depends_on: [fuzz]` expands to all members of the `fuzz` group.

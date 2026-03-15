@@ -325,6 +325,16 @@ def test_init_command_prints_codex_fuzz_matrix_128_template():
     assert "seed_bucket:" in result.stdout
 
 
+def test_init_command_requires_destination_for_template_with_support_files():
+    result = runner.invoke(app, ["init", "--template", "codex-fuzz-matrix-manifest-128"])
+
+    assert result.exit_code == 1
+    assert (
+        result.stderr
+        == "Template `codex-fuzz-matrix-manifest-128` includes support files and requires a destination path.\n"
+    )
+
+
 def test_init_command_prints_codex_fuzz_swarm_template():
     result = runner.invoke(app, ["init", "--template", "codex-fuzz-swarm"])
 
@@ -392,6 +402,8 @@ def test_templates_command_lists_bundled_templates():
         "(source: `examples/fuzz/codex-fuzz-matrix.yaml`; use: `agentflow init --template codex-fuzz-matrix`)\n"
         "- codex-fuzz-matrix-128: 128-shard Codex fuzz matrix that uses `fanout.matrix` for target families, strategies, and seed buckets. "
         "(source: `examples/fuzz/codex-fuzz-matrix-128.yaml`; use: `agentflow init --template codex-fuzz-matrix-128`)\n"
+        "- codex-fuzz-matrix-manifest-128: 128-shard Codex fuzz matrix that loads its axes from `fanout.matrix_path` for easier maintainer edits. "
+        "(assets: `manifests/codex-fuzz-matrix-manifest-128.axes.yaml`; source: `examples/fuzz/codex-fuzz-matrix-manifest-128.yaml`; use: `agentflow init --template codex-fuzz-matrix-manifest-128`)\n"
         "- codex-fuzz-swarm: Configurable Codex fuzz swarm scaffold; defaults to 32 shards and scales cleanly to larger campaigns. "
         "(params: `shards=32`, `concurrency=8`, `name=codex-fuzz-swarm-<shards>`, `working_dir=./codex_fuzz_swarm_<shards>`; source: `examples/fuzz/fuzz_codex_32.yaml`; use: `agentflow init --template codex-fuzz-swarm`)\n"
         "- codex-fuzz-swarm-128: 128-shard Codex fuzzing swarm with init, retries, per-shard workdirs, and a merge reducer. "
@@ -415,6 +427,19 @@ def test_init_command_writes_selected_template_to_destination(tmp_path):
     assert destination.read_text(encoding="utf-8").startswith("name: local-real-agents-kimi-smoke\n")
 
 
+def test_init_command_writes_selected_template_and_support_files_to_destination(tmp_path):
+    destination = tmp_path / "templates" / "fuzz-matrix-manifest.yaml"
+
+    result = runner.invoke(app, ["init", str(destination), "--template", "codex-fuzz-matrix-manifest-128"])
+
+    assert result.exit_code == 0
+    assert result.stdout == f"Wrote `codex-fuzz-matrix-manifest-128` template to `{destination}`.\n"
+    assert "\nname: codex-fuzz-matrix-manifest-128\n" in f"\n{destination.read_text(encoding='utf-8')}"
+    support_file = destination.parent / "manifests" / "codex-fuzz-matrix-manifest-128.axes.yaml"
+    assert support_file.exists()
+    assert "seed_bucket:" in support_file.read_text(encoding="utf-8")
+
+
 def test_init_command_refuses_to_overwrite_existing_file_without_force(tmp_path):
     destination = tmp_path / "pipeline.yaml"
     destination.write_text("name: keep-me\n", encoding="utf-8")
@@ -424,6 +449,19 @@ def test_init_command_refuses_to_overwrite_existing_file_without_force(tmp_path)
     assert result.exit_code == 1
     assert result.stderr == f"Destination `{destination}` already exists. Use `--force` to overwrite it.\n"
     assert destination.read_text(encoding="utf-8") == "name: keep-me\n"
+
+
+def test_init_command_refuses_to_overwrite_existing_support_file_without_force(tmp_path):
+    destination = tmp_path / "templates" / "fuzz-matrix-manifest.yaml"
+    support_file = destination.parent / "manifests" / "codex-fuzz-matrix-manifest-128.axes.yaml"
+    support_file.parent.mkdir(parents=True)
+    support_file.write_text("keep-me\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["init", str(destination), "--template", "codex-fuzz-matrix-manifest-128"])
+
+    assert result.exit_code == 1
+    assert result.stderr == f"Destination `{support_file}` already exists. Use `--force` to overwrite it.\n"
+    assert support_file.read_text(encoding="utf-8") == "keep-me\n"
 
 
 def test_init_command_rejects_unknown_template():
@@ -9016,6 +9054,7 @@ nodes:
         encoding="utf-8",
     )
     monkeypatch.setattr(agentflow.cli, "build_pipeline_local_claude_readiness_checks", lambda pipeline: [])
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "super-secret")
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://open.bigmodel.cn/api/anthropic")
 
     result = runner.invoke(app, ["doctor", str(pipeline_path), "--output", "summary"])
@@ -9113,6 +9152,7 @@ nodes:
         encoding="utf-8",
     )
     monkeypatch.setattr(agentflow.cli, "build_pipeline_local_claude_readiness_checks", lambda pipeline: [])
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "super-secret")
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://open.bigmodel.cn/api/anthropic")
 
     result = runner.invoke(app, ["doctor", str(pipeline_path), "--output", "summary"])
@@ -9165,6 +9205,7 @@ nodes:
         encoding="utf-8",
     )
     monkeypatch.setattr(agentflow.cli, "build_pipeline_local_claude_readiness_checks", lambda pipeline: [])
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "super-secret")
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://open.bigmodel.cn/api/anthropic")
 
     result = runner.invoke(app, ["doctor", str(pipeline_path), "--output", "json"])
@@ -9853,6 +9894,8 @@ nodes:
     )
     monkeypatch.setenv("AGENTFLOW_KIMI_MOCK_RESPONSE", "kimi ok")
     monkeypatch.setenv("KIMI_API_KEY", "super-secret")
+    monkeypatch.setattr(agentflow.cli, "build_pipeline_local_kimi_readiness_checks", lambda pipeline: [])
+    monkeypatch.setattr(agentflow.cli, "build_pipeline_local_kimi_readiness_info_checks", lambda pipeline: [])
 
     result = runner.invoke(app, ["run", str(pipeline_path), "--output", "summary"])
 

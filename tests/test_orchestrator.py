@@ -244,6 +244,63 @@ async def test_orchestrator_renders_fanout_values_context_in_merge_prompt(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_orchestrator_renders_file_backed_fanout_values_context_in_merge_prompt(tmp_path: Path):
+    manifests = tmp_path / "manifests"
+    manifests.mkdir()
+    (manifests / "shards.yaml").write_text(
+        """- target: libpng
+  seed: 1001
+- target: sqlite
+  seed: 2002
+""",
+        encoding="utf-8",
+    )
+    orchestrator = make_orchestrator(tmp_path)
+    pipeline = PipelineSpec.model_validate(
+        {
+            "name": "fanout-values-path",
+            "working_dir": str(tmp_path),
+            "base_dir": str(tmp_path),
+            "concurrency": 2,
+            "nodes": [
+                {
+                    "id": "worker",
+                    "fanout": {
+                        "as": "shard",
+                        "values_path": "manifests/shards.yaml",
+                    },
+                    "agent": "codex",
+                    "prompt": "worker {{ shard.target }} seed {{ shard.seed }}",
+                },
+                {
+                    "id": "merge",
+                    "agent": "codex",
+                    "depends_on": ["worker"],
+                    "prompt": (
+                        "fanout={{ fanouts.worker.size }} :: "
+                        "{% for shard in fanouts.worker.nodes %}"
+                        "{{ shard.id }}={{ shard.target }}:{{ shard.seed }}:{{ shard.output }};"
+                        "{% endfor %}"
+                    ),
+                },
+            ],
+        }
+    )
+
+    run = await orchestrator.submit(pipeline)
+    completed = await orchestrator.wait(run.id, timeout=5)
+
+    assert completed.status.value == "completed"
+    assert set(completed.nodes) == {"worker_0", "worker_1", "merge"}
+    assert completed.nodes["worker_0"].output == "worker libpng seed 1001"
+    assert completed.nodes["worker_1"].output == "worker sqlite seed 2002"
+    assert completed.nodes["merge"].output == (
+        "fanout=2 :: worker_0=libpng:1001:worker libpng seed 1001;"
+        "worker_1=sqlite:2002:worker sqlite seed 2002;"
+    )
+
+
+@pytest.mark.asyncio
 async def test_orchestrator_renders_fanout_matrix_context_in_merge_prompt(tmp_path: Path):
     orchestrator = make_orchestrator(tmp_path)
     pipeline = PipelineSpec.model_validate(

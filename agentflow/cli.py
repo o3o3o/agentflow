@@ -18,6 +18,8 @@ from agentflow.defaults import (
     bundled_template_names,
     load_bundled_template_yaml,
     default_smoke_pipeline_path,
+    bundled_template_path,
+    bundled_template_support_files,
 )
 from agentflow.doctor import (
     DoctorCheck,
@@ -1971,6 +1973,8 @@ def templates() -> None:
             f"source: `examples/{template.example_name}`",
             f"use: `agentflow init --template {template.name}`",
         ]
+        if template.support_files:
+            details.insert(0, "assets: " + ", ".join(f"`{path}`" for path in template.support_files))
         if template.parameters:
             details.insert(
                 0,
@@ -2016,8 +2020,15 @@ def init(
     except ValueError as exc:
         param_hint = "--template" if template not in bundled_template_names() else "--set"
         raise typer.BadParameter(str(exc), param_hint=param_hint) from exc
+    support_files = bundled_template_support_files(template)
 
     if path is None or path == "-":
+        if support_files:
+            typer.echo(
+                f"Template `{template}` includes support files and requires a destination path.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
         typer.echo(template_yaml, nl=False)
         return
 
@@ -2029,8 +2040,21 @@ def init(
         typer.echo(f"Destination `{destination}` already exists. Use `--force` to overwrite it.", err=True)
         raise typer.Exit(code=1)
 
+    template_path = bundled_template_path(template)
+    support_copies: list[tuple[Path, Path]] = []
+    for relative_path in support_files:
+        source = (template_path.parent / relative_path).resolve()
+        target = destination.parent / relative_path
+        support_copies.append((source, target))
+        if target.exists() and not force:
+            typer.echo(f"Destination `{target}` already exists. Use `--force` to overwrite it.", err=True)
+            raise typer.Exit(code=1)
+
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(template_yaml, encoding="utf-8")
+    for source, target in support_copies:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(source.read_bytes())
     typer.echo(f"Wrote `{template}` template to `{destination}`.")
 
 

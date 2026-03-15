@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import csv
+import json
 import os
 import re
 import shlex
-from itertools import product
 from collections import Counter
 from datetime import datetime, timezone
 from enum import StrEnum
+from itertools import product
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+import yaml
 
 from agentflow.local_shell import (
     invalid_bash_long_option_error,
@@ -81,6 +84,7 @@ _FANOUT_ALIAS_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _FANOUT_RESERVED_CONTEXT_NAMES = {"fanout", "fanouts", "nodes", "pipeline"}
 _FANOUT_MEMBER_RESERVED_NAMES = {"index", "number", "count", "suffix", "value", "template_id", "node_id"}
 _FANOUT_TEMPLATE_PATTERN = re.compile(r"{{\s*(?P<expr>[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*}}")
+_FANOUT_EXPANSION_MODE_KEYS = ("count", "values", "values_path", "matrix", "matrix_path")
 
 
 def _normalize_local_bootstrap(value: object) -> str | None:
@@ -151,6 +155,14 @@ def _normalized_provider_env_text(provider: ProviderConfig, key: str) -> str | N
 
 def _normalized_provider_env_base_url(provider: ProviderConfig, key: str) -> str | None:
     return _normalized_provider_base_url(_normalized_provider_env_text(provider, key))
+
+
+def _coerce_base_dir(value: object) -> Path | None:
+    if isinstance(value, Path):
+        return value.expanduser().resolve()
+    if isinstance(value, str) and value.strip():
+        return Path(value).expanduser().resolve()
+    return None
 
 
 def provider_uses_kimi_anthropic_auth(provider: ProviderConfig | None) -> bool:
@@ -663,6 +675,75 @@ def _render_fanout_string(template_text: str, context: dict[str, Any]) -> str:
     return _FANOUT_TEMPLATE_PATTERN.sub(_replace, template_text)
 
 
+def _resolve_fanout_manifest_path(raw_path: object, *, key: str, base_dir: Path | None) -> Path:
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        raise ValueError(f"`fanout.{key}` must be a non-empty path")
+
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute():
+        path = ((base_dir or Path.cwd()) / path).resolve()
+    else:
+        path = path.resolve()
+
+    if not path.exists():
+        raise ValueError(f"`fanout.{key}` path `{path}` does not exist")
+    if not path.is_file():
+        raise ValueError(f"`fanout.{key}` path `{path}` is not a file")
+    return path
+
+
+def _load_fanout_manifest_payload(path: Path) -> Any:
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            if reader.fieldnames is None:
+                raise ValueError(f"fanout manifest `{path}` must include a CSV header row")
+            return [dict(row) for row in reader]
+
+    data = path.read_text(encoding="utf-8")
+    try:
+        return json.loads(data)
+    except json.JSONDecodeError:
+        try:
+            return yaml.safe_load(data)
+        except yaml.YAMLError as exc:
+            raise ValueError(f"fanout manifest `{path}` could not be parsed as JSON or YAML") from exc
+
+
+def _resolve_fanout_manifest_modes(raw_fanout: Any, *, base_dir: Path | None) -> Any:
+    if not isinstance(raw_fanout, dict):
+        return raw_fanout
+
+    updated = dict(raw_fanout)
+    selected_modes = [key for key in _FANOUT_EXPANSION_MODE_KEYS if updated.get(key) is not None]
+    if len(selected_modes) > 1:
+        joined = ", ".join(f"`{key}`" for key in _FANOUT_EXPANSION_MODE_KEYS)
+        raise ValueError(f"fanout accepts exactly one of {joined}")
+
+    values_path = updated.pop("values_path", None)
+    if values_path is not None:
+        path = _resolve_fanout_manifest_path(values_path, key="values_path", base_dir=base_dir)
+        values = _load_fanout_manifest_payload(path)
+        if not isinstance(values, list):
+            raise ValueError(
+                f"`fanout.values_path` file `{path}` must contain a list in JSON/YAML or rows in CSV format"
+            )
+        updated["values"] = values
+
+    matrix_path = updated.pop("matrix_path", None)
+    if matrix_path is not None:
+        path = _resolve_fanout_manifest_path(matrix_path, key="matrix_path", base_dir=base_dir)
+        if path.suffix.lower() == ".csv":
+            raise ValueError("`fanout.matrix_path` does not support CSV; use JSON or YAML")
+        matrix = _load_fanout_manifest_payload(path)
+        if not isinstance(matrix, dict):
+            raise ValueError(f"`fanout.matrix_path` file `{path}` must contain a JSON/YAML object")
+        updated["matrix"] = matrix
+
+    return updated
+
+
 def _expand_fanout_node(node: dict[str, Any], fanout: FanoutSpec) -> tuple[list[dict[str, Any]], list[str]]:
     template_id = node.get("id")
     if not isinstance(template_id, str) or not template_id.strip():
@@ -710,11 +791,12 @@ def _expand_fanout_dependencies(nodes: list[Any], fanouts: dict[str, list[str]])
     return expanded_nodes
 
 
-def expand_compact_nodes(payload: dict[str, Any]) -> dict[str, Any]:
+def expand_compact_nodes(payload: dict[str, Any], *, base_dir: str | Path | None = None) -> dict[str, Any]:
     resolved = dict(payload)
     nodes = resolved.get("nodes")
     if not isinstance(nodes, list):
         return resolved
+    resolved_base_dir = _coerce_base_dir(base_dir)
 
     source_ids = [node.get("id") for node in nodes if isinstance(node, dict) and isinstance(node.get("id"), str)]
     duplicate_source_ids = {node_id for node_id, count in Counter(source_ids).items() if count > 1}
@@ -740,7 +822,7 @@ def expand_compact_nodes(payload: dict[str, Any]) -> dict[str, Any]:
             expanded_nodes.append(dict(node))
             continue
         saw_fanout = True
-        fanout = FanoutSpec.model_validate(raw_fanout)
+        fanout = FanoutSpec.model_validate(_resolve_fanout_manifest_modes(raw_fanout, base_dir=resolved_base_dir))
         rendered_nodes, member_ids = _expand_fanout_node(node, fanout)
         fanouts[str(node.get("id"))] = member_ids
         expanded_nodes.extend(rendered_nodes)
@@ -844,7 +926,9 @@ class PipelineSpec(BaseModel):
     def apply_defaults(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
-        return apply_local_target_defaults(expand_compact_nodes(data))
+        payload = dict(data)
+        base_dir = payload.pop("base_dir", None)
+        return apply_local_target_defaults(expand_compact_nodes(payload, base_dir=base_dir))
 
     @model_validator(mode="after")
     def validate_nodes(self) -> "PipelineSpec":

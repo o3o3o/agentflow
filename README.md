@@ -25,6 +25,7 @@ agentflow init > pipeline.yaml
 agentflow init repo-sweep.yaml --template codex-fanout-repo-sweep
 agentflow init fuzz-matrix.yaml --template codex-fuzz-matrix
 agentflow init fuzz-matrix-128.yaml --template codex-fuzz-matrix-128
+agentflow init fuzz-matrix-manifest-128.yaml --template codex-fuzz-matrix-manifest-128
 agentflow init fuzz-swarm.yaml --template codex-fuzz-swarm
 agentflow init fuzz-128.yaml --template codex-fuzz-swarm --set shards=128 --set concurrency=32
 agentflow validate pipeline.yaml
@@ -44,6 +45,7 @@ Choose a starter:
 - `codex-fanout-repo-sweep` for repo review and audit fanout
 - `codex-fuzz-matrix` for heterogeneous campaigns built from reusable axes
 - `codex-fuzz-matrix-128` for a full 128-shard matrix reference
+- `codex-fuzz-matrix-manifest-128` for a 128-shard matrix whose axes live in a sidecar manifest
 - `codex-fuzz-swarm` for homogeneous shard swarms you resize with `--set shards=...`
 
 ## Example
@@ -181,7 +183,20 @@ nodes:
       {% endfor %}
 ```
 
-See `examples/codex-fanout-repo-sweep.yaml` for a bundled maintainer-friendly review template, `examples/fuzz/codex-fuzz-matrix.yaml` for an adaptation-friendly `fanout.matrix` fuzz starter, `examples/fuzz/codex-fuzz-matrix-128.yaml` for a 128-shard matrix reference, `examples/fuzz/fuzz_codex_32.yaml` for the default right-sized Codex fuzz swarm, and `examples/fuzz/fuzz_codex_128.yaml` for the fixed 128-shard homogeneous reference swarm. The fuzz starters are scaffoldable via `agentflow init --template codex-fuzz-matrix`, `agentflow init --template codex-fuzz-matrix-128`, `agentflow init --template codex-fuzz-swarm`, and `agentflow init --template codex-fuzz-swarm --set shards=128 --set concurrency=32`.
+When the shard catalog or matrix axes need to live outside the main pipeline file, use `fanout.values_path` or `fanout.matrix_path`. `values_path` accepts JSON/YAML lists and CSV files; `matrix_path` accepts JSON/YAML objects. Relative paths resolve from the pipeline file, which keeps large maintainer-owned catalogs easy to retarget without rewriting the reducer or launch settings.
+
+```yaml
+nodes:
+  - id: fuzzer
+    fanout:
+      as: shard
+      matrix_path: manifests/campaign.axes.yaml
+    agent: codex
+    prompt: |
+      Fuzz {{ shard.target }} with {{ shard.sanitizer }} using seed {{ shard.seed }}.
+```
+
+See `examples/codex-fanout-repo-sweep.yaml` for a bundled maintainer-friendly review template, `examples/fuzz/codex-fuzz-matrix.yaml` for an adaptation-friendly `fanout.matrix` fuzz starter, `examples/fuzz/codex-fuzz-matrix-128.yaml` for a 128-shard inline matrix reference, `examples/fuzz/codex-fuzz-matrix-manifest-128.yaml` for the same scale with external axes, `examples/fuzz/fuzz_codex_32.yaml` for the default right-sized Codex fuzz swarm, and `examples/fuzz/fuzz_codex_128.yaml` for the fixed 128-shard homogeneous reference swarm. The fuzz starters are scaffoldable via `agentflow init --template codex-fuzz-matrix`, `agentflow init --template codex-fuzz-matrix-128`, `agentflow init fuzz-matrix-manifest-128.yaml --template codex-fuzz-matrix-manifest-128`, `agentflow init --template codex-fuzz-swarm`, and `agentflow init --template codex-fuzz-swarm --set shards=128 --set concurrency=32`.
 
 ## Docs
 

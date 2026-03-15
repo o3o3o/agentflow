@@ -19,6 +19,7 @@ class BundledTemplate:
     example_name: str
     description: str
     parameters: tuple[BundledTemplateParameter, ...] = ()
+    support_files: tuple[str, ...] = ()
 
 
 _DEFAULT_FUZZ_SWARM_SHARDS = 32
@@ -192,6 +193,12 @@ _BUNDLED_TEMPLATES = (
         description="128-shard Codex fuzz matrix that uses `fanout.matrix` for target families, strategies, and seed buckets.",
     ),
     BundledTemplate(
+        name="codex-fuzz-matrix-manifest-128",
+        example_name="fuzz/codex-fuzz-matrix-manifest-128.yaml",
+        description="128-shard Codex fuzz matrix that loads its axes from `fanout.matrix_path` for easier maintainer edits.",
+        support_files=("manifests/codex-fuzz-matrix-manifest-128.axes.yaml",),
+    ),
+    BundledTemplate(
         name="codex-fuzz-swarm",
         example_name="fuzz/fuzz_codex_32.yaml",
         description="Configurable Codex fuzz swarm scaffold; defaults to 32 shards and scales cleanly to larger campaigns.",
@@ -241,6 +248,7 @@ _BUNDLED_TEMPLATES = (
 )
 
 _BUNDLED_TEMPLATE_FILES = {template.name: template.example_name for template in _BUNDLED_TEMPLATES}
+_BUNDLED_TEMPLATE_SUPPORT_FILES = {template.name: template.support_files for template in _BUNDLED_TEMPLATES}
 _BUNDLED_TEMPLATE_RENDERERS = {
     "codex-fuzz-swarm": _render_codex_fuzz_swarm_template,
 }
@@ -331,6 +339,16 @@ def bundled_template_path(name: str) -> Path:
             f"unknown bundled template `{name}` (available: {available}; see `agentflow templates`)"
         ) from exc
     return bundled_example_path(example_name)
+
+
+def bundled_template_support_files(name: str) -> tuple[str, ...]:
+    try:
+        return _BUNDLED_TEMPLATE_SUPPORT_FILES[name]
+    except KeyError as exc:
+        available = ", ".join(f"`{template}`" for template in bundled_template_names())
+        raise ValueError(
+            f"unknown bundled template `{name}` (available: {available}; see `agentflow templates`)"
+        ) from exc
 
 
 def load_bundled_template_yaml(name: str, values: Mapping[str, str] | None = None) -> str:
