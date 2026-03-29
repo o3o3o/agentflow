@@ -1,6 +1,9 @@
 """Generate installation scripts for agent CLIs on cloud instances."""
 from __future__ import annotations
 
+import json
+import shlex
+
 
 def agent_install_script(agents: list[str]) -> str:
     """Return a bash script that installs the requested agent CLIs.
@@ -60,3 +63,42 @@ def agent_dockerfile(agents: list[str], base_image: str = "ubuntu:24.04") -> str
     lines.append("WORKDIR /workspace")
     lines.append('ENTRYPOINT ["/bin/bash", "-c"]')
     return "\n".join(lines)
+
+
+def agent_auth_setup(agent: str, env: dict[str, str]) -> str:
+    """Return a bash snippet that writes auth config for an agent CLI.
+
+    Reads API keys and base URLs from *env* and writes the config files
+    that each CLI expects. Call this before the agent command so the
+    CLI finds credentials automatically.
+    """
+    parts: list[str] = []
+
+    if agent == "codex":
+        api_key = env.get("OPENAI_API_KEY", "")
+        base_url = env.get("OPENAI_BASE_URL", "")
+        if api_key:
+            auth = json.dumps({"OPENAI_API_KEY": api_key})
+            parts.append(f"mkdir -p ~/.codex")
+            parts.append(f"echo {shlex.quote(auth)} > ~/.codex/auth.json")
+        if base_url:
+            parts.append(f"mkdir -p ~/.codex")
+            config_lines = [
+                '[model_providers.OpenAI]',
+                'name = "OpenAI"',
+                f'base_url = "{base_url}"',
+                'wire_api = "responses"',
+                'requires_openai_auth = true',
+            ]
+            config_str = "\\n".join(config_lines)
+            parts.append(f'printf {shlex.quote(config_str + chr(10))} > ~/.codex/config.toml')
+    elif agent == "claude":
+        api_key = env.get("ANTHROPIC_API_KEY", "")
+        if api_key:
+            parts.append(f"export ANTHROPIC_API_KEY={shlex.quote(api_key)}")
+    elif agent == "kimi":
+        api_key = env.get("KIMI_API_KEY", "")
+        if api_key:
+            parts.append(f"export KIMI_API_KEY={shlex.quote(api_key)}")
+
+    return " && ".join(parts) if parts else ""

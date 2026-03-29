@@ -160,12 +160,30 @@ class EC2Runner(Runner):
                 if wait_result.exit_code != 0:
                     await on_output("stderr", "cloud-init may have failed, proceeding anyway...")
 
+            # Inject agent auth setup into the command
+            from agentflow.cloud.installer import agent_auth_setup
+
+            auth_setup = agent_auth_setup(node.agent.value, prepared.env)
+            if auth_setup:
+                import shlex
+                original_cmd = " ".join(shlex.quote(p) for p in prepared.command)
+                auth_prepared = PreparedExecution(
+                    command=["bash", "-c", f"{auth_setup} && {original_cmd}"],
+                    env=prepared.env,
+                    cwd=prepared.cwd,
+                    trace_kind=prepared.trace_kind,
+                    runtime_files=prepared.runtime_files,
+                    stdin=prepared.stdin,
+                )
+            else:
+                auth_prepared = prepared
+
             await on_output("stderr", "Executing agent command...")
             ssh_node = SimpleNamespace(
                 id=node.id, target=ssh_target,
                 timeout_seconds=node.timeout_seconds,
             )
-            return await ssh_runner.execute(ssh_node, prepared, paths, on_output, should_cancel)
+            return await ssh_runner.execute(ssh_node, auth_prepared, paths, on_output, should_cancel)
         except Exception as exc:
             return RawExecutionResult(
                 exit_code=1, stdout_lines=[],

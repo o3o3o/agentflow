@@ -22,7 +22,7 @@ from agentflow.specs import NodeSpec
 class ECSRunner(Runner):
     """Execute agent nodes as ECS Fargate tasks."""
 
-    def _build_and_push_image(self, region: str, agents: list[str], on_status) -> str:
+    def _build_and_push_image(self, region: str, agents: list[str], base_image: str | None, on_status) -> str:
         """Build a Docker image with agents and push to ECR. Returns image URI."""
         import boto3
 
@@ -51,7 +51,7 @@ class ECSRunner(Runner):
         )
 
         # Build image
-        dockerfile_content = agent_dockerfile(agents)
+        dockerfile_content = agent_dockerfile(agents, base_image=base_image or "ubuntu:24.04")
         on_status(f"Building Docker image with agents: {agents}")
         result = subprocess.run(
             ["docker", "build", "-t", image_uri, "-"],
@@ -132,13 +132,19 @@ class ECSRunner(Runner):
 
     def _register_task_def(self, node: NodeSpec, prepared: PreparedExecution, execution_role_arn: str, image: str) -> str:
         import boto3
+        import shlex
+
+        from agentflow.cloud.installer import agent_auth_setup
 
         target = node.target
         ecs = boto3.client("ecs", region_name=target.region)
         log_group = f"/agentflow/{node.id}"
         env_list = [{"name": k, "value": v} for k, v in prepared.env.items()]
-        import shlex
-        cmd_str = " ".join(shlex.quote(part) for part in prepared.command)
+
+        # Build the command with auth setup prepended
+        agent_cmd = " ".join(shlex.quote(part) for part in prepared.command)
+        auth_setup = agent_auth_setup(node.agent.value, prepared.env)
+        cmd_str = f"{auth_setup} && {agent_cmd}" if auth_setup else agent_cmd
 
         resp = ecs.register_task_definition(
             family=f"agentflow-{node.id}",
@@ -296,9 +302,10 @@ class ECSRunner(Runner):
             if not image and target.install_agents:
                 def _status(msg):
                     pass  # sync callback for build progress
-                await on_output("stderr", f"Building agent image with {target.install_agents}...")
+                base = target.image or None
+                await on_output("stderr", f"Building agent image with {target.install_agents} (base: {base or 'ubuntu:24.04'})...")
                 image = await asyncio.to_thread(
-                    self._build_and_push_image, target.region, target.install_agents, _status,
+                    self._build_and_push_image, target.region, target.install_agents, base, _status,
                 )
                 await on_output("stderr", f"Image ready: {image}")
             elif not image:
