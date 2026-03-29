@@ -30,7 +30,7 @@ class RenderedBundledTemplateFile:
 
 @dataclass(frozen=True)
 class RenderedBundledTemplate:
-    yaml: str
+    content: str
     support_files: tuple[RenderedBundledTemplateFile, ...] = ()
 
 
@@ -106,164 +106,171 @@ def _render_codex_repo_sweep_batched_template(values: Mapping[str, str] | None =
         raw_values.get("working_dir"),
         default=f"./codex_repo_sweep_batched_{shards}",
     )
-    batch_count = max(1, (shards + batch_size - 1) // batch_size)
 
-    rendered_yaml = Template(
-        """# Configurable large-scale Codex repository sweep
+    rendered = Template(
+        '''# Configurable large-scale Codex repository sweep
 #
 # This scaffold fans out a large repo review into many Codex shards, then
-# inserts batched reducers so a 128-worker sweep still lands in a readable
+# inserts batched reducers so a $shards-worker sweep still lands in a readable
 # maintainer handoff.
 #
 # Usage:
-#   agentflow init repo-sweep-batched.yaml --template codex-repo-sweep-batched
-#   agentflow init repo-sweep-security.yaml --template codex-repo-sweep-batched --set shards=64 --set batch_size=8 --set concurrency=16 --set focus="security bugs, privilege boundaries, and missing coverage"
-#   agentflow inspect repo-sweep-batched.yaml --output summary
-#   agentflow run repo-sweep-batched.yaml
+#   agentflow init repo-sweep-batched.py --template codex-repo-sweep-batched
+#   agentflow init repo-sweep-security.py --template codex-repo-sweep-batched --set shards=64 --set batch_size=8 --set concurrency=16 --set focus="security bugs, privilege boundaries, and missing coverage"
+#   agentflow inspect repo-sweep-batched.py --output summary
+#   agentflow run repo-sweep-batched.py
 
-name: $name
-description: Configurable $shards-shard Codex repository sweep with automatic $batch_count-way batched reducers for maintainer review.
-working_dir: $working_dir
-concurrency: $concurrency
+from agentflow import DAG, codex, fanout_batches, fanout_count
 
-node_defaults:
-  agent: codex
-  tools: read_only
-  capture: final
-  timeout_seconds: 900
+with DAG(
+    "$name",
+    description="Configurable $shards-shard Codex repository sweep with batched reducers for maintainer review.",
+    working_dir="$working_dir",
+    concurrency=$concurrency,
+    node_defaults={
+        "agent": "codex",
+        "tools": "read_only",
+        "capture": "final",
+        "timeout_seconds": 900,
+    },
+    agent_defaults={
+        "codex": {
+            "model": "gpt-5-codex",
+            "retries": 1,
+            "retry_backoff_seconds": 1,
+            "extra_args": ["--search", "-c", 'model_reasoning_effort="high"'],
+        }
+    },
+) as dag:
+    prepare = codex(
+        task_id="prepare",
+        prompt=(
+            "Inspect the repository and write shared instructions for a $shards-shard Codex maintainer sweep.\\n"
+            "\\n"
+            "Review goal:\\n"
+            "- Focus on $focus.\\n"
+            "- Prefer concrete bugs, risky assumptions, or clearly missing tests over generic style feedback.\\n"
+            "- Make the sweep reproducible by using a stable path-hash modulo strategy across $shards shards.\\n"
+            "- Call out hot subsystems or directories that deserve extra attention.\\n"
+            "- End with a compact rubric the reducers can use to rank findings by severity and confidence.\\n"
+        ),
+    )
 
-agent_defaults:
-  codex:
-    model: gpt-5-codex
-    retries: 1
-    retry_backoff_seconds: 1
-    extra_args:
-      - "--search"
-      - "-c"
-      - 'model_reasoning_effort="high"'
+    sweep = codex(
+        task_id="sweep",
+        fanout=fanout_count(
+            $shards,
+            as_="shard",
+            derive={"label": "slice {{ shard.number }}/{{ shard.count }}"},
+        ),
+        prompt=(
+            "You are Codex repository sweep shard {{ shard.number }} of {{ shard.count }}.\\n"
+            "\\n"
+            "Shared plan:\\n"
+            "{{ nodes.prepare.output }}\\n"
+            "\\n"
+            "Your shard contract:\\n"
+            "- Stable identity: {{ shard.node_id }} (suffix {{ shard.suffix }})\\n"
+            "- Review files whose stable path hash modulo {{ shard.count }} equals {{ shard.index }}.\\n"
+            "- Focus on $focus.\\n"
+            "- Avoid duplicate work outside your modulo slice unless you need one small neighboring file for context.\\n"
+            "- Report concrete findings first. Include file paths, the failure mode, and the missing validation or test if applicable.\\n"
+            "- If your slice is quiet, report the most suspicious code paths worth a second pass.\\n"
+        ),
+    )
 
-nodes:
-  - id: prepare
-    prompt: |
-      Inspect the repository and write shared instructions for a $shards-shard Codex maintainer sweep.
+    batch_merge = codex(
+        task_id="batch_merge",
+        fanout=fanout_batches("sweep", $batch_size, as_="batch"),
+        prompt=(
+            "Prepare the maintainer handoff for review batch {{ current.number }} of {{ current.count }}.\\n"
+            "\\n"
+            "Batch coverage:\\n"
+            "- Source group: {{ current.source_group }}\\n"
+            "- Total source shards: {{ current.source_count }}\\n"
+            "- Batch size: {{ current.scope.size }}\\n"
+            "- Shard range: {{ current.start_number }} through {{ current.end_number }}\\n"
+            '- Shard ids: {{ current.scope.ids | join(", ") }}\\n'
+            "- Completed shards: {{ current.scope.summary.completed }}\\n"
+            "- Failed shards: {{ current.scope.summary.failed }}\\n"
+            "- Silent shards: {{ current.scope.summary.without_output }}\\n"
+            "\\n"
+            "Rank the batch findings by severity, then confidence, then breadth of impact. "
+            "If the batch is quiet, say so explicitly and point to the slices that should be rerun or retargeted.\\n"
+            "\\n"
+            "{% for shard in current.scope.with_output.nodes %}\\n"
+            "## {{ shard.label }} :: {{ shard.node_id }} (status: {{ shard.status }})\\n"
+            "{{ shard.output }}\\n"
+            "\\n"
+            "{% endfor %}"
+            "{% if current.scope.failed.size %}\\n"
+            "Failed slices:\\n"
+            "{% for shard in current.scope.failed.nodes %}\\n"
+            "- {{ shard.id }} :: {{ shard.label }}\\n"
+            "{% endfor %}"
+            "{% endif %}"
+            "{% if not current.scope.with_output.size %}\\n"
+            "No slice in this batch produced reducer-ready output. "
+            "Say that explicitly and use the failed shard list to suggest retargeting.\\n"
+            "{% endif %}"
+        ),
+    )
 
-      Review goal:
-      - Focus on $focus.
-      - Prefer concrete bugs, risky assumptions, or clearly missing tests over generic style feedback.
-      - Make the sweep reproducible by using a stable path-hash modulo strategy across $shards shards.
-      - Call out hot subsystems or directories that deserve extra attention.
-      - End with a compact rubric the reducers can use to rank findings by severity and confidence.
+    merge = codex(
+        task_id="merge",
+        prompt=(
+            "Consolidate this $shards-shard repository sweep into a maintainer summary.\\n"
+            "Start with the highest-risk findings, then repeated patterns across batches, "
+            "and end with quiet or failed slices that need a follow-up pass.\\n"
+            "\\n"
+            "Campaign status:\\n"
+            "- Total review shards: {{ fanouts.sweep.size }}\\n"
+            "- Completed shards: {{ fanouts.sweep.summary.completed }}\\n"
+            "- Failed shards: {{ fanouts.sweep.summary.failed }}\\n"
+            "- Silent shards: {{ fanouts.sweep.summary.without_output }}\\n"
+            "- Batch reducers completed: {{ fanouts.batch_merge.summary.completed }} / {{ fanouts.batch_merge.size }}\\n"
+            "\\n"
+            "{% for batch in fanouts.batch_merge.with_output.nodes %}\\n"
+            "## Batch {{ batch.number }} :: shards {{ batch.start_number }}-{{ batch.end_number }} (status: {{ batch.status }})\\n"
+            "{{ batch.output }}\\n"
+            "\\n"
+            "{% endfor %}"
+            "{% if fanouts.batch_merge.without_output.size %}\\n"
+            "Batch reducers needing attention:\\n"
+            "{% for batch in fanouts.batch_merge.without_output.nodes %}\\n"
+            "- {{ batch.id }} :: shards {{ batch.start_number }}-{{ batch.end_number }} (status: {{ batch.status }})\\n"
+            "{% endfor %}"
+            "{% endif %}"
+        ),
+    )
 
-  - id: sweep
-    fanout:
-      count: $shards
-      as: shard
-      derive:
-        label: "slice {{ shard.number }}/{{ shard.count }}"
-    depends_on: [prepare]
-    prompt: |
-      You are Codex repository sweep shard {{ shard.number }} of {{ shard.count }}.
+    prepare >> sweep
+    sweep >> batch_merge
+    batch_merge >> merge
 
-      Shared plan:
-      {{ nodes.prepare.output }}
-
-      Your shard contract:
-      - Stable identity: {{ shard.node_id }} (suffix {{ shard.suffix }})
-      - Review files whose stable path hash modulo {{ shard.count }} equals {{ shard.index }}.
-      - Focus on $focus.
-      - Avoid duplicate work outside your modulo slice unless you need one small neighboring file for context.
-      - Report concrete findings first. Include file paths, the failure mode, and the missing validation or test if applicable.
-      - If your slice is quiet, report the most suspicious code paths worth a second pass.
-
-  - id: batch_merge
-    fanout:
-      as: batch
-      batches:
-        from: sweep
-        size: $batch_size
-    depends_on: [sweep]
-    prompt: |
-      Prepare the maintainer handoff for review batch {{ current.number }} of {{ current.count }}.
-
-      Batch coverage:
-      - Source group: {{ current.source_group }}
-      - Total source shards: {{ current.source_count }}
-      - Batch size: {{ current.scope.size }}
-      - Shard range: {{ current.start_number }} through {{ current.end_number }}
-      - Shard ids: {{ current.scope.ids | join(", ") }}
-      - Completed shards: {{ current.scope.summary.completed }}
-      - Failed shards: {{ current.scope.summary.failed }}
-      - Silent shards: {{ current.scope.summary.without_output }}
-
-      Rank the batch findings by severity, then confidence, then breadth of impact. If the batch is quiet, say so explicitly and point to the slices that should be rerun or retargeted.
-
-      {% for shard in current.scope.with_output.nodes %}
-      ## {{ shard.label }} :: {{ shard.node_id }} (status: {{ shard.status }})
-      {{ shard.output }}
-
-      {% endfor %}
-      {% if current.scope.failed.size %}
-      Failed slices:
-      {% for shard in current.scope.failed.nodes %}
-      - {{ shard.id }} :: {{ shard.label }}
-      {% endfor %}
-      {% endif %}
-      {% if not current.scope.with_output.size %}
-      No slice in this batch produced reducer-ready output. Say that explicitly and use the failed shard list to suggest retargeting.
-      {% endif %}
-
-  - id: merge
-    depends_on: [batch_merge]
-    prompt: |
-      Consolidate this $shards-shard repository sweep into a maintainer summary.
-      Start with the highest-risk findings, then repeated patterns across batches, and end with quiet or failed slices that need a follow-up pass.
-
-      Campaign status:
-      - Total review shards: {{ fanouts.sweep.size }}
-      - Completed shards: {{ fanouts.sweep.summary.completed }}
-      - Failed shards: {{ fanouts.sweep.summary.failed }}
-      - Silent shards: {{ fanouts.sweep.summary.without_output }}
-      - Batch reducers completed: {{ fanouts.batch_merge.summary.completed }} / {{ fanouts.batch_merge.size }}
-
-      {% for batch in fanouts.batch_merge.with_output.nodes %}
-      ## Batch {{ batch.number }} :: shards {{ batch.start_number }}-{{ batch.end_number }} (status: {{ batch.status }})
-      {{ batch.output }}
-
-      {% endfor %}
-      {% if fanouts.batch_merge.without_output.size %}
-      Batch reducers needing attention:
-      {% for batch in fanouts.batch_merge.without_output.nodes %}
-      - {{ batch.id }} :: shards {{ batch.start_number }}-{{ batch.end_number }} (status: {{ batch.status }})
-      {% endfor %}
-      {% endif %}
-"""
+print(dag.to_json())
+'''
     ).substitute(
         name=name,
         shards=shards,
         batch_size=batch_size,
-        batch_count=batch_count,
         concurrency=concurrency,
         working_dir=working_dir,
         focus=focus,
     )
-    return RenderedBundledTemplate(yaml=rendered_yaml)
+    return RenderedBundledTemplate(content=rendered)
 
 
 _BUNDLED_TEMPLATES = (
     BundledTemplate(
         name="pipeline",
-        example_name="pipeline.yaml",
+        example_name="airflow_like.py",
         description="Generic Codex/Claude/Kimi starter DAG.",
     ),
     BundledTemplate(
-        name="codex-fanout-repo-sweep",
-        example_name="codex-fanout-repo-sweep.yaml",
-        description="Codex repo sweep that fans out one plan into 8 review shards and a final merge.",
-    ),
-    BundledTemplate(
         name="codex-repo-sweep-batched",
-        example_name="codex-repo-sweep-batched.yaml",
-        description="Configurable large-scale Codex repo sweep that uses `fanout.batches` plus `node_defaults` / `agent_defaults` to keep 128-shard maintainer reviews readable.",
+        example_name="airflow_like_fuzz_batched.py",
+        description="Configurable large-scale Codex repo sweep that uses `fanout_batches` plus `node_defaults` / `agent_defaults` to keep 128-shard maintainer reviews readable.",
         parameters=(
             BundledTemplateParameter(
                 name="shards",
@@ -299,17 +306,17 @@ _BUNDLED_TEMPLATES = (
     ),
     BundledTemplate(
         name="local-kimi-smoke",
-        example_name="local-real-agents-kimi-smoke.yaml",
+        example_name="local-real-agents-kimi-smoke.py",
         description="Local Codex plus Claude-on-Kimi smoke DAG using `bootstrap: kimi`.",
     ),
     BundledTemplate(
         name="local-kimi-shell-init-smoke",
-        example_name="local-real-agents-kimi-shell-init-smoke.yaml",
+        example_name="local-real-agents-kimi-shell-init-smoke.py",
         description="Local Codex plus Claude-on-Kimi smoke DAG using explicit `shell_init: kimi`.",
     ),
     BundledTemplate(
         name="local-kimi-shell-wrapper-smoke",
-        example_name="local-real-agents-kimi-shell-wrapper-smoke.yaml",
+        example_name="local-real-agents-kimi-shell-wrapper-smoke.py",
         description="Local Codex plus Claude-on-Kimi smoke DAG using an explicit `target.shell` Kimi wrapper.",
     ),
 )
@@ -320,67 +327,12 @@ _BUNDLED_TEMPLATE_RENDERERS = {
     "codex-repo-sweep-batched": _render_codex_repo_sweep_batched_template,
 }
 
-DEFAULT_PIPELINE_YAML = """name: parallel-code-orchestration
-description: Codex plans, Claude implements, and Kimi reviews in parallel before a final Codex merge.
-working_dir: .
-concurrency: 3
-nodes:
-  - id: plan
-    agent: codex
-    model: gpt-5-codex
-    tools: read_only
-    capture: final
-    prompt: |
-      Inspect the repository and create a short implementation plan.
 
-  - id: implement
-    agent: claude
-    model: claude-sonnet-4-5
-    tools: read_write
-    capture: final
-    depends_on: [plan]
-    prompt: |
-      Use the plan below and implement the requested change.
-
-      Plan:
-      {{ nodes.plan.output }}
-
-  - id: review
-    agent: kimi
-    model: kimi-k2-turbo-preview
-    tools: read_only
-    capture: trace
-    depends_on: [plan]
-    prompt: |
-      Review the proposed implementation plan.
-
-      Plan:
-      {{ nodes.plan.output }}
-
-  - id: merge
-    agent: codex
-    model: gpt-5-codex
-    tools: read_only
-    depends_on: [implement, review]
-    success_criteria:
-      - kind: output_contains
-        value: success
-    prompt: |
-      Combine these two perspectives into a final release summary and include the word success.
-
-      Implementation output:
-      {{ nodes.implement.output }}
-
-      Review trace:
-      {{ nodes.review.output }}
-"""
-
-
-def load_default_pipeline_yaml() -> str:
-    example_path = bundled_example_path("pipeline.yaml")
+def load_default_pipeline() -> str:
+    example_path = bundled_example_path("airflow_like.py")
     if example_path.exists():
         return example_path.read_text(encoding="utf-8")
-    return DEFAULT_PIPELINE_YAML
+    raise FileNotFoundError("default pipeline example not found")
 
 
 def bundled_example_path(name: str) -> Path:
@@ -418,10 +370,6 @@ def bundled_template_support_files(name: str) -> tuple[str, ...]:
 
 def render_bundled_template(name: str, values: Mapping[str, str] | None = None) -> RenderedBundledTemplate:
     template_values = dict(values or {})
-    if name == "pipeline":
-        if template_values:
-            raise ValueError("template `pipeline` does not accept `--set` values")
-        return RenderedBundledTemplate(yaml=load_default_pipeline_yaml())
 
     renderer = _BUNDLED_TEMPLATE_RENDERERS.get(name)
     if renderer is not None:
@@ -439,14 +387,14 @@ def render_bundled_template(name: str, values: Mapping[str, str] | None = None) 
         for relative_path in bundled_template_support_files(name)
     )
     return RenderedBundledTemplate(
-        yaml=template_path.read_text(encoding="utf-8"),
+        content=template_path.read_text(encoding="utf-8"),
         support_files=rendered_support_files,
     )
 
 
-def load_bundled_template_yaml(name: str, values: Mapping[str, str] | None = None) -> str:
-    return render_bundled_template(name, values=values).yaml
+def load_bundled_template(name: str, values: Mapping[str, str] | None = None) -> str:
+    return render_bundled_template(name, values=values).content
 
 
 def default_smoke_pipeline_path() -> str:
-    return str(bundled_example_path("local-real-agents-kimi-smoke.yaml"))
+    return str(bundled_example_path("local-real-agents-kimi-smoke.py"))

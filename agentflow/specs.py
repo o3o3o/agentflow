@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-import yaml
 
 from agentflow.local_shell import (
     invalid_bash_long_option_error,
@@ -43,6 +42,11 @@ class ToolAccess(StrEnum):
 class CaptureMode(StrEnum):
     FINAL = "final"
     TRACE = "trace"
+
+
+class PeriodicActuationMode(StrEnum):
+    NONE = "none"
+    OUTPUT_JSON = "output_json"
 
 
 class NodeStatus(StrEnum):
@@ -644,6 +648,22 @@ class FanoutSpec(BaseModel):
         return self.count
 
 
+class PeriodicScheduleSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    every_seconds: int = Field(ge=1)
+    until_fanout_settles_from: str
+    actuation: PeriodicActuationMode = PeriodicActuationMode.NONE
+
+    @field_validator("until_fanout_settles_from")
+    @classmethod
+    def validate_until_fanout_settles_from(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("`schedule.until_fanout_settles_from` must not be empty")
+        return normalized
+
+
 class NodeSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -667,6 +687,7 @@ class NodeSpec(BaseModel):
     success_criteria: list[SuccessCriterion] = Field(default_factory=list)
     retries: int = Field(default=0, ge=0)
     retry_backoff_seconds: float = Field(default=1.0, ge=0.0)
+    schedule: PeriodicScheduleSpec | None = None
     fanout_group: str | None = Field(default=None, exclude=True)
     fanout_member: dict[str, Any] | None = Field(default=None, exclude=True)
     fanout_dependencies: dict[str, list[str]] = Field(default_factory=dict, exclude=True)
@@ -677,6 +698,11 @@ class NodeSpec(BaseModel):
         duplicate_mcp_names = sorted(name for name, count in Counter(mcp.name for mcp in self.mcps).items() if count > 1)
         if duplicate_mcp_names:
             raise ValueError(f"duplicate MCP server names on node {self.id!r}: {duplicate_mcp_names}")
+        if self.schedule is not None:
+            if self.fanout_group is not None:
+                raise ValueError("scheduled nodes cannot also use `fanout`")
+            if self.target.kind != "local":
+                raise ValueError("scheduled nodes currently require a local target")
         resolve_provider(self.provider, self.agent)
         return self
 
@@ -992,11 +1018,8 @@ def _load_fanout_manifest_payload(path: Path) -> Any:
     data = path.read_text(encoding="utf-8")
     try:
         return json.loads(data)
-    except json.JSONDecodeError:
-        try:
-            return yaml.safe_load(data)
-        except yaml.YAMLError as exc:
-            raise ValueError(f"fanout manifest `{path}` could not be parsed as JSON or YAML") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"fanout manifest `{path}` could not be parsed as JSON") from exc
 
 
 def _resolve_fanout_manifest_modes(raw_fanout: Any, *, base_dir: Path | None) -> Any:
@@ -1015,7 +1038,7 @@ def _resolve_fanout_manifest_modes(raw_fanout: Any, *, base_dir: Path | None) ->
         values = _load_fanout_manifest_payload(path)
         if not isinstance(values, list):
             raise ValueError(
-                f"`fanout.values_path` file `{path}` must contain a list in JSON/YAML or rows in CSV format"
+                f"`fanout.values_path` file `{path}` must contain a JSON list or CSV rows"
             )
         updated["values"] = values
 
@@ -1023,10 +1046,10 @@ def _resolve_fanout_manifest_modes(raw_fanout: Any, *, base_dir: Path | None) ->
     if matrix_path is not None:
         path = _resolve_fanout_manifest_path(matrix_path, key="matrix_path", base_dir=base_dir)
         if path.suffix.lower() == ".csv":
-            raise ValueError("`fanout.matrix_path` does not support CSV; use JSON or YAML")
+            raise ValueError("`fanout.matrix_path` does not support CSV; use JSON")
         matrix = _load_fanout_manifest_payload(path)
         if not isinstance(matrix, dict):
-            raise ValueError(f"`fanout.matrix_path` file `{path}` must contain a JSON/YAML object")
+            raise ValueError(f"`fanout.matrix_path` file `{path}` must contain a JSON object")
         updated["matrix"] = matrix
 
     return updated
@@ -1405,6 +1428,25 @@ class PipelineSpec(BaseModel):
         }
         if fanout_missing:
             raise ValueError(f"fanout metadata references unknown nodes: {sorted(fanout_missing)}")
+        node_indexes = {node.id: index for index, node in enumerate(self.nodes)}
+        fanout_indexes = {
+            group_id: max(node_indexes[member_id] for member_id in member_ids)
+            for group_id, member_ids in self.fanouts.items()
+            if member_ids
+        }
+        for node in self.nodes:
+            if node.schedule is None:
+                continue
+            watched_group = node.schedule.until_fanout_settles_from
+            if watched_group not in self.fanouts:
+                available = ", ".join(f"`{group_id}`" for group_id in sorted(self.fanouts)) or "(none)"
+                raise ValueError(
+                    f"scheduled node {node.id!r} watches unknown fanout group `{watched_group}`; available fanouts: {available}"
+                )
+            if fanout_indexes[watched_group] >= node_indexes[node.id]:
+                raise ValueError(
+                    f"scheduled node {node.id!r} must appear after the watched fanout group `{watched_group}`"
+                )
         self._validate_acyclic_graph()
         return self
 
@@ -1481,6 +1523,9 @@ class NodeResult(BaseModel):
     success_details: list[str] = Field(default_factory=list)
     current_attempt: int = 0
     attempts: list[NodeAttempt] = Field(default_factory=list)
+    tick_count: int = 0
+    last_tick_started_at: str | None = None
+    next_scheduled_at: str | None = None
 
 
 class RunRecord(BaseModel):

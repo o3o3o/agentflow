@@ -82,6 +82,96 @@ class LaunchPlanAdapter(AgentAdapter):
         )
 
 
+class SlowPeriodicAdapter(AgentAdapter):
+    def prepare(self, node, prompt: str, paths: ExecutionPaths) -> PreparedExecution:
+        script = r'''
+import json
+import sys
+import time
+
+node_id = sys.argv[1]
+prompt = sys.argv[2]
+
+if node_id.startswith("worker"):
+    time.sleep(1.6)
+    text = f"{node_id} finished"
+else:
+    text = prompt
+
+print(json.dumps({
+    "type": "response.output_item.done",
+    "item": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text}]}
+}))
+'''
+        return PreparedExecution(
+            command=["python3", "-c", script, node.id, prompt],
+            env={},
+            cwd=paths.target_workdir,
+            trace_kind=node.agent.value,
+        )
+
+
+class PeriodicControlAdapter(AgentAdapter):
+    def prepare(self, node, prompt: str, paths: ExecutionPaths) -> PreparedExecution:
+        script = r'''
+import json
+import re
+import sys
+import time
+from pathlib import Path
+
+node_id = sys.argv[1]
+prompt = sys.argv[2]
+workdir = Path.cwd()
+
+if node_id.startswith("worker"):
+    marker = workdir / f".{node_id}.rerun"
+    if marker.exists():
+        text = "healthy"
+        print(json.dumps({
+            "type": "response.output_item.done",
+            "item": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text}]}
+        }))
+        raise SystemExit(0)
+
+    marker.write_text("rerun", encoding="utf-8")
+    text = "underperforming"
+    print(json.dumps({
+        "type": "response.output_item.done",
+        "item": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text}]}
+    }))
+    sys.stdout.flush()
+    for _ in range(80):
+        time.sleep(0.05)
+    raise SystemExit(0)
+
+match = re.search(r"(/[^\s]+stdout\.log)", prompt)
+stdout_log = Path(match.group(1)) if match else None
+payload = {"analysis": "stable", "actions": []}
+if stdout_log is not None and stdout_log.exists():
+    content = stdout_log.read_text(encoding="utf-8")
+    if "underperforming" in content and "healthy" not in content:
+        payload = {
+            "analysis": "cancel and rerun",
+            "actions": [
+                {"kind": "cancel", "node_ids": ["worker_0"]},
+                {"kind": "rerun", "node_ids": ["worker_0"]},
+            ],
+        }
+
+print(json.dumps({
+    "type": "response.output_item.done",
+    "item": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": json.dumps(payload)}]}
+}))
+'''
+        return PreparedExecution(
+            command=["python3", "-c", script, node.id, prompt],
+            env={},
+            cwd=paths.target_workdir,
+            trace_kind=node.agent.value,
+        )
+
+
 def make_orchestrator(tmp_path: Path) -> Orchestrator:
     adapters = AdapterRegistry()
     adapters.register(AgentKind.CODEX, MockAdapter())
@@ -310,11 +400,8 @@ async def test_orchestrator_renders_curated_fanout_matrix_context_in_merge_promp
 async def test_orchestrator_renders_file_backed_fanout_values_context_in_merge_prompt(tmp_path: Path):
     manifests = tmp_path / "manifests"
     manifests.mkdir()
-    (manifests / "shards.yaml").write_text(
-        """- target: libpng
-  seed: 1001
-- target: sqlite
-  seed: 2002
+    (manifests / "shards.json").write_text(
+        """[{"target": "libpng", "seed": 1001}, {"target": "sqlite", "seed": 2002}]
 """,
         encoding="utf-8",
     )
@@ -330,7 +417,7 @@ async def test_orchestrator_renders_file_backed_fanout_values_context_in_merge_p
                     "id": "worker",
                     "fanout": {
                         "as": "shard",
-                        "values_path": "manifests/shards.yaml",
+                        "values_path": "manifests/shards.json",
                     },
                     "agent": "codex",
                     "prompt": "worker {{ shard.target }} seed {{ shard.seed }}",
@@ -539,6 +626,114 @@ async def test_orchestrator_renders_current_scope_for_batched_reducers(tmp_path:
     assert set(completed.nodes) == {"worker_0", "worker_1", "worker_2", "batch_merge_0", "batch_merge_1"}
     assert completed.nodes["batch_merge_0"].output == "done=2/2 :: worker_0=worker 1;worker_1=worker 2;"
     assert completed.nodes["batch_merge_1"].output == "done=1/1 :: worker_2=worker 3;"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_reschedules_periodic_nodes_until_watched_fanout_settles(tmp_path: Path):
+    adapters = AdapterRegistry()
+    adapters.register(AgentKind.CODEX, SlowPeriodicAdapter())
+    orchestrator = Orchestrator(store=RunStore(tmp_path / "runs"), adapters=adapters, runners=RunnerRegistry())
+    pipeline = PipelineSpec.model_validate(
+        {
+            "name": "periodic-monitor",
+            "working_dir": str(tmp_path),
+            "concurrency": 3,
+            "nodes": [
+                {
+                    "id": "worker",
+                    "fanout": {
+                        "count": 2,
+                        "as": "shard",
+                    },
+                    "agent": "codex",
+                    "prompt": "worker {{ shard.number }}",
+                },
+                {
+                    "id": "monitor",
+                    "agent": "codex",
+                    "schedule": {
+                        "every_seconds": 1,
+                        "until_fanout_settles_from": "worker",
+                    },
+                    "prompt": "tick {{ current.tick_number }} running={{ fanouts.worker.summary.running }}",
+                },
+            ],
+        }
+    )
+
+    run = await orchestrator.submit(pipeline)
+    completed = await orchestrator.wait(run.id, timeout=10)
+
+    monitor = completed.nodes["monitor"]
+    assert completed.status.value == "completed"
+    assert monitor.status.value == "completed"
+    assert monitor.tick_count >= 2
+    assert len(monitor.attempts) >= 2
+    assert monitor.output is not None and monitor.output.startswith("tick ")
+    events = orchestrator.store.get_events(completed.id)
+    tick_events = [event for event in events if event.type == "node_tick_completed" and event.node_id == "monitor"]
+    assert len(tick_events) >= 2
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_periodic_nodes_can_cancel_and_rerun_watched_members_from_logs(tmp_path: Path):
+    adapters = AdapterRegistry()
+    adapters.register(AgentKind.CODEX, PeriodicControlAdapter())
+    orchestrator = Orchestrator(store=RunStore(tmp_path / "runs"), adapters=adapters, runners=RunnerRegistry())
+    pipeline = PipelineSpec.model_validate(
+        {
+            "name": "periodic-control",
+            "working_dir": str(tmp_path),
+            "concurrency": 2,
+            "nodes": [
+                {
+                    "id": "worker",
+                    "fanout": {
+                        "count": 1,
+                        "as": "shard",
+                    },
+                    "agent": "codex",
+                    "prompt": "worker {{ shard.number }}",
+                    "timeout_seconds": 30,
+                },
+                {
+                    "id": "monitor",
+                    "agent": "codex",
+                    "schedule": {
+                        "every_seconds": 1,
+                        "until_fanout_settles_from": "worker",
+                        "actuation": "output_json",
+                    },
+                    "prompt": "watch {{ fanouts.worker.nodes[0].artifacts.stdout_log }}",
+                },
+            ],
+        }
+    )
+
+    run = await orchestrator.submit(pipeline)
+    completed = await orchestrator.wait(run.id, timeout=10)
+
+    worker = completed.nodes["worker_0"]
+    monitor = completed.nodes["monitor"]
+
+    assert completed.status.value == "completed"
+    assert worker.status.value == "completed"
+    assert len(worker.attempts) == 2
+    assert worker.attempts[0].status.value == "cancelled"
+    assert worker.attempts[1].status.value == "completed"
+    assert worker.output == "healthy"
+    assert monitor.status.value == "completed"
+    assert monitor.output == "cancel and rerun"
+
+    action_artifact = json.loads(
+        orchestrator.store.read_artifact_text(completed.id, "monitor", "periodic-actions-tick-1.json")
+    )
+    assert action_artifact["actions"] == [
+        {"kind": "cancel", "node_ids": ["worker_0"], "reason": None},
+        {"kind": "rerun", "node_ids": ["worker_0"], "reason": None},
+    ]
+    events = orchestrator.store.get_events(completed.id)
+    assert any(event.type == "node_control_actions_applied" and event.node_id == "monitor" for event in events)
 
 
 @pytest.mark.asyncio

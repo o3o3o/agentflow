@@ -325,7 +325,7 @@ def test_airflow_like_dag_supports_grouped_fanout_helpers():
     assert nodes["merge"].depends_on == ["family_merge_0", "family_merge_1"]
 
 
-def test_airflow_like_dag_can_render_json_and_yaml():
+def test_airflow_like_dag_can_render_json():
     with DAG(
         "render-demo",
         description="render helpers",
@@ -335,22 +335,12 @@ def test_airflow_like_dag_can_render_json_and_yaml():
         codex(task_id="plan", prompt="line one\nline two")
 
     rendered_json = dag.to_json()
-    rendered_yaml = dag.to_yaml()
     spec_from_json = load_pipeline_from_text(rendered_json)
-    spec_from_yaml = load_pipeline_from_text(rendered_yaml)
 
     assert '"description": "render helpers"' in rendered_json
     assert '"working_dir": "/tmp/render-demo"' in rendered_json
-    assert "description: render helpers\n" in rendered_yaml
-    assert "working_dir: /tmp/render-demo\n" in rendered_yaml
-    assert "node_defaults:\n  tools: read_only\n" in rendered_yaml
-    assert "prompt: |-" in rendered_yaml
-    assert "line one" in rendered_yaml
-    assert "line two" in rendered_yaml
     assert spec_from_json.name == "render-demo"
     assert spec_from_json.node_map["plan"].prompt == "line one\nline two"
-    assert spec_from_yaml.name == "render-demo"
-    assert spec_from_yaml.node_map["plan"].prompt == "line one\nline two"
 
 
 def test_airflow_like_dag_supports_values_path_and_batch_fanout_helpers(tmp_path):
@@ -432,10 +422,13 @@ def test_airflow_like_fuzz_batched_example_emits_valid_pipeline():
     assert spec.node_map["batch_merge_0"].depends_on == spec.fanouts["fuzzer"][:16]
     assert spec.node_map["batch_merge_0"].fanout_member["member_ids"] == spec.fanouts["fuzzer"][:16]
     assert spec.node_map["batch_merge_7"].fanout_member["member_ids"] == spec.fanouts["fuzzer"][112:]
+    assert spec.node_map["monitor"].schedule is not None
+    assert spec.node_map["monitor"].schedule.every_seconds == 600
+    assert spec.node_map["monitor"].schedule.until_fanout_settles_from == "fuzzer"
     assert spec.node_map["batch_merge_0"].prompt.startswith(
         "Prepare the maintainer handoff for shard batch {{ current.number }} of {{ current.count }}."
     )
-    assert spec.node_map["merge"].depends_on == spec.fanouts["batch_merge"]
+    assert spec.node_map["merge"].depends_on == [*spec.fanouts["batch_merge"], "monitor"]
 
 
 def test_airflow_like_fuzz_grouped_example_emits_valid_pipeline():

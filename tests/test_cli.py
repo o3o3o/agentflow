@@ -269,15 +269,9 @@ def _completed_run(
 
 
 def test_validate_command_outputs_normalized_pipeline(tmp_path):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: cli
-working_dir: .
-nodes:
-  - id: alpha
-    agent: codex
-    prompt: hi
-""",
+        json.dumps({"name": "cli", "working_dir": ".", "nodes": [{"id": "alpha", "agent": "codex", "prompt": "hi"}]}),
         encoding="utf-8",
     )
 
@@ -293,31 +287,20 @@ def test_init_command_prints_default_pipeline_template():
     result = runner.invoke(app, ["init"])
 
     assert result.exit_code == 0
-    assert result.stdout.startswith("name: parallel-code-orchestration\n")
-    assert "agent: codex" in result.stdout
-    assert "agent: claude" in result.stdout
-    assert "agent: kimi" in result.stdout
-
-
-def test_init_command_prints_codex_fanout_repo_sweep_template():
-    result = runner.invoke(app, ["init", "--template", "codex-fanout-repo-sweep"])
-
-    assert result.exit_code == 0
-    assert result.stdout.startswith("name: codex-fanout-repo-sweep\n")
-    assert "count: 8" in result.stdout
-    assert "id: prepare" in result.stdout
-    assert "id: sweep" in result.stdout
-    assert "id: merge" in result.stdout
+    assert "from agentflow import" in result.stdout
+    assert "codex(" in result.stdout
+    assert "claude(" in result.stdout
+    assert "kimi(" in result.stdout
 
 
 def test_init_command_prints_codex_repo_sweep_batched_template():
     result = runner.invoke(app, ["init", "--template", "codex-repo-sweep-batched"])
 
     assert result.exit_code == 0
-    assert "\nname: codex-repo-sweep-batched-128\n" in f"\n{result.stdout}"
-    assert "node_defaults:" in result.stdout
-    assert "agent_defaults:" in result.stdout
-    assert "batches:" in result.stdout
+    assert "codex-repo-sweep-batched-128" in result.stdout
+    assert "node_defaults" in result.stdout
+    assert "agent_defaults" in result.stdout
+    assert "fanout_batches" in result.stdout
 
 
 def test_init_command_prints_custom_codex_repo_sweep_batched_template():
@@ -343,11 +326,11 @@ def test_init_command_prints_custom_codex_repo_sweep_batched_template():
     )
 
     assert result.exit_code == 0
-    assert "\nname: custom-repo-sweep-64\n" in f"\n{result.stdout}"
-    assert "working_dir: ./custom_repo_sweep" in result.stdout
-    assert "concurrency: 20" in result.stdout
-    assert "count: 64" in result.stdout
-    assert "size: 8" in result.stdout
+    assert "custom-repo-sweep-64" in result.stdout
+    assert "./custom_repo_sweep" in result.stdout
+    assert "concurrency=20" in result.stdout
+    assert "64," in result.stdout
+    assert '"sweep", 8' in result.stdout
     assert "Focus on security bugs, privilege boundaries, and missing coverage." in result.stdout
 
 
@@ -357,20 +340,17 @@ def test_init_command_prints_custom_codex_repo_sweep_batched_template():
         (
             "local-kimi-smoke",
             "local-real-agents-kimi-smoke",
-            ("bootstrap: kimi", "provider: kimi"),
+            ('"bootstrap": "kimi"', 'provider="kimi"'),
         ),
         (
             "local-kimi-shell-init-smoke",
             "local-real-agents-kimi-shell-init-smoke",
-            ("shell: bash", "shell_login: true", "shell_interactive: true", "shell_init: kimi", "provider: kimi"),
+            ('"shell": "bash"', '"shell_login": True', '"shell_interactive": True', '"shell_init": "kimi"', 'provider="kimi"'),
         ),
         (
             "local-kimi-shell-wrapper-smoke",
             "local-real-agents-kimi-shell-wrapper-smoke",
-            (
-                "shell: \"bash -lic 'command -v kimi >/dev/null 2>&1 && kimi && {command}'\"",
-                "provider: kimi",
-            ),
+            ("bash -lic", 'provider="kimi"'),
         ),
     ],
 )
@@ -378,7 +358,7 @@ def test_init_command_prints_local_kimi_smoke_templates(template, pipeline_name,
     result = runner.invoke(app, ["init", "--template", template])
 
     assert result.exit_code == 0
-    assert result.stdout.startswith(f"name: {pipeline_name}\n")
+    assert pipeline_name in result.stdout
     for fragment in expected_fragments:
         assert fragment in result.stdout
 
@@ -389,27 +369,26 @@ def test_templates_command_lists_current_bundled_templates():
     assert result.exit_code == 0
     assert result.stdout.splitlines() == [
         "Bundled templates:",
-        "- pipeline: Generic Codex/Claude/Kimi starter DAG. (source: `examples/pipeline.yaml`; use: `agentflow init --template pipeline`)",
-        "- codex-fanout-repo-sweep: Codex repo sweep that fans out one plan into 8 review shards and a final merge. (source: `examples/codex-fanout-repo-sweep.yaml`; use: `agentflow init --template codex-fanout-repo-sweep`)",
-        "- codex-repo-sweep-batched: Configurable large-scale Codex repo sweep that uses `fanout.batches` plus `node_defaults` / `agent_defaults` to keep 128-shard maintainer reviews readable. (params: `shards=128`, `batch_size=16`, `concurrency=32`, `focus=bugs, risky code paths, and missing tests`, `name=codex-repo-sweep-batched-<shards>`, `working_dir=./codex_repo_sweep_batched_<shards>`; source: `examples/codex-repo-sweep-batched.yaml`; use: `agentflow init --template codex-repo-sweep-batched`)",
-        "- local-kimi-smoke: Local Codex plus Claude-on-Kimi smoke DAG using `bootstrap: kimi`. (source: `examples/local-real-agents-kimi-smoke.yaml`; use: `agentflow init --template local-kimi-smoke`)",
-        "- local-kimi-shell-init-smoke: Local Codex plus Claude-on-Kimi smoke DAG using explicit `shell_init: kimi`. (source: `examples/local-real-agents-kimi-shell-init-smoke.yaml`; use: `agentflow init --template local-kimi-shell-init-smoke`)",
-        "- local-kimi-shell-wrapper-smoke: Local Codex plus Claude-on-Kimi smoke DAG using an explicit `target.shell` Kimi wrapper. (source: `examples/local-real-agents-kimi-shell-wrapper-smoke.yaml`; use: `agentflow init --template local-kimi-shell-wrapper-smoke`)",
+        "- pipeline: Generic Codex/Claude/Kimi starter DAG. (source: `examples/airflow_like.py`; use: `agentflow init --template pipeline`)",
+        "- codex-repo-sweep-batched: Configurable large-scale Codex repo sweep that uses `fanout_batches` plus `node_defaults` / `agent_defaults` to keep 128-shard maintainer reviews readable. (params: `shards=128`, `batch_size=16`, `concurrency=32`, `focus=bugs, risky code paths, and missing tests`, `name=codex-repo-sweep-batched-<shards>`, `working_dir=./codex_repo_sweep_batched_<shards>`; source: `examples/airflow_like_fuzz_batched.py`; use: `agentflow init --template codex-repo-sweep-batched`)",
+        "- local-kimi-smoke: Local Codex plus Claude-on-Kimi smoke DAG using `bootstrap: kimi`. (source: `examples/local-real-agents-kimi-smoke.py`; use: `agentflow init --template local-kimi-smoke`)",
+        "- local-kimi-shell-init-smoke: Local Codex plus Claude-on-Kimi smoke DAG using explicit `shell_init: kimi`. (source: `examples/local-real-agents-kimi-shell-init-smoke.py`; use: `agentflow init --template local-kimi-shell-init-smoke`)",
+        "- local-kimi-shell-wrapper-smoke: Local Codex plus Claude-on-Kimi smoke DAG using an explicit `target.shell` Kimi wrapper. (source: `examples/local-real-agents-kimi-shell-wrapper-smoke.py`; use: `agentflow init --template local-kimi-shell-wrapper-smoke`)",
     ]
 
 
 def test_init_command_writes_selected_template_to_destination(tmp_path):
-    destination = tmp_path / "templates" / "smoke.yaml"
+    destination = tmp_path / "templates" / "smoke.py"
 
     result = runner.invoke(app, ["init", str(destination), "--template", "local-kimi-smoke"])
 
     assert result.exit_code == 0
     assert result.stdout == f"Wrote `local-kimi-smoke` template to `{destination}`.\n"
-    assert destination.read_text(encoding="utf-8").startswith("name: local-real-agents-kimi-smoke\n")
+    assert "local-real-agents-kimi-smoke" in destination.read_text(encoding="utf-8")
 
 
 def test_init_command_writes_codex_repo_sweep_batched_template_to_destination(tmp_path):
-    destination = tmp_path / "templates" / "repo-sweep-batched.yaml"
+    destination = tmp_path / "templates" / "repo-sweep-batched.py"
 
     result = runner.invoke(
         app,
@@ -435,16 +414,16 @@ def test_init_command_writes_codex_repo_sweep_batched_template_to_destination(tm
 
     assert result.exit_code == 0
     assert result.stdout == f"Wrote `codex-repo-sweep-batched` template to `{destination}`.\n"
-    rendered_yaml = destination.read_text(encoding="utf-8")
-    assert "\nname: custom-repo-sweep-64\n" in f"\n{rendered_yaml}"
-    assert "concurrency: 20" in rendered_yaml
-    assert "node_defaults:" in rendered_yaml
-    assert "agent_defaults:" in rendered_yaml
-    assert "Focus on security bugs, privilege boundaries, and missing coverage." in rendered_yaml
+    rendered = destination.read_text(encoding="utf-8")
+    assert "custom-repo-sweep-64" in rendered
+    assert "concurrency=20" in rendered
+    assert "node_defaults" in rendered
+    assert "agent_defaults" in rendered
+    assert "Focus on security bugs, privilege boundaries, and missing coverage." in rendered
 
 
 def test_init_command_refuses_to_overwrite_existing_file_without_force(tmp_path):
-    destination = tmp_path / "pipeline.yaml"
+    destination = tmp_path / "pipeline.py"
     destination.write_text("name: keep-me\n", encoding="utf-8")
 
     result = runner.invoke(app, ["init", str(destination), "--template", "local-kimi-smoke"])
@@ -455,14 +434,14 @@ def test_init_command_refuses_to_overwrite_existing_file_without_force(tmp_path)
 
 
 def test_init_command_overwrites_existing_file_with_force(tmp_path):
-    destination = tmp_path / "pipeline.yaml"
+    destination = tmp_path / "pipeline.py"
     destination.write_text("name: keep-me\n", encoding="utf-8")
 
     result = runner.invoke(app, ["init", str(destination), "--template", "local-kimi-shell-init-smoke", "--force"])
 
     assert result.exit_code == 0
     assert result.stdout == f"Wrote `local-kimi-shell-init-smoke` template to `{destination}`.\n"
-    assert destination.read_text(encoding="utf-8").startswith("name: local-real-agents-kimi-shell-init-smoke\n")
+    assert "local-real-agents-kimi-shell-init-smoke" in destination.read_text(encoding="utf-8")
 
 
 def test_init_command_rejects_directory_destination(tmp_path):
@@ -481,7 +460,7 @@ def test_init_command_rejects_unknown_template():
     assert result.exit_code != 0
     assert "unknown bundled template `missing-template`" in result.stderr
     assert "`pipeline`" in result.stderr
-    assert "`codex-fanout-repo-sweep`" in result.stderr
+    assert "`codex-repo-sweep-batched`" in result.stderr
     assert "`local-kimi-shell-wrapper-smoke`" in result.stderr
     assert "`agentflow templates`" in result.stderr
 
@@ -666,18 +645,9 @@ def test_validate_resolves_working_dir_relative_to_pipeline_file(tmp_path, monke
     workdir.mkdir()
     task_dir = workdir / "task"
     task_dir.mkdir()
-    pipeline_path = pipeline_dir / "pipeline.yaml"
+    pipeline_path = pipeline_dir / "pipeline.json"
     pipeline_path.write_text(
-        """name: cli
-working_dir: workspace
-nodes:
-  - id: alpha
-    agent: codex
-    prompt: hi
-    target:
-      kind: local
-      cwd: task
-""",
+        json.dumps({"name": 'cli', "working_dir": 'workspace', "nodes": [{"id": 'alpha', "agent": 'codex', "prompt": 'hi', "target": {"kind": 'local', "cwd": 'task'}}]}),
         encoding="utf-8",
     )
     other_dir = tmp_path / "elsewhere"
@@ -699,23 +669,9 @@ def test_validate_applies_local_target_defaults_and_resolves_relative_cwd(tmp_pa
     workdir.mkdir()
     default_task_dir = workdir / "shared-task"
     default_task_dir.mkdir()
-    pipeline_path = pipeline_dir / "pipeline.yaml"
+    pipeline_path = pipeline_dir / "pipeline.json"
     pipeline_path.write_text(
-        """name: cli-local-defaults
-working_dir: workspace
-local_target_defaults:
-  shell: bash
-  shell_login: true
-  shell_interactive: true
-  shell_init:
-    - command -v kimi >/dev/null 2>&1
-    - kimi
-  cwd: shared-task
-nodes:
-  - id: alpha
-    agent: codex
-    prompt: hi
-""",
+        json.dumps({"name": 'cli-local-defaults', "working_dir": 'workspace', "local_target_defaults": {"shell": 'bash', "shell_login": True, "shell_interactive": True, "shell_init": ['command -v kimi >/dev/null 2>&1', 'kimi'], "cwd": 'shared-task'}, "nodes": [{"id": 'alpha', "agent": 'codex', "prompt": 'hi'}]}),
         encoding="utf-8",
     )
     other_dir = tmp_path / "elsewhere"
@@ -732,19 +688,9 @@ nodes:
 
 
 def test_validate_reports_pipeline_validation_error_without_traceback(tmp_path):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: cli-invalid-bash
-working_dir: .
-nodes:
-  - id: alpha
-    agent: claude
-    prompt: hi
-    target:
-      kind: local
-      shell: bash --rcfile=\"$HOME/.bashrc\" -ic 'kimi && {command}'
-      shell_init: kimi
-""",
+        json.dumps({"name": 'cli-invalid-bash', "working_dir": '.', "nodes": [{"id": 'alpha', "agent": 'claude', "prompt": 'hi', "target": {"kind": 'local', "shell": 'bash --rcfile="$HOME/.bashrc" -ic \'kimi && {command}\'', "shell_init": 'kimi'}}]}),
         encoding="utf-8",
     )
 
@@ -758,19 +704,9 @@ nodes:
 
 
 def test_validate_rejects_incompatible_kimi_bootstrap_shorthand(tmp_path):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: cli-invalid-kimi-bootstrap
-working_dir: .
-nodes:
-  - id: alpha
-    agent: claude
-    prompt: hi
-    target:
-      kind: local
-      bootstrap: kimi
-      shell: sh
-""",
+        json.dumps({"name": 'cli-invalid-kimi-bootstrap', "working_dir": '.', "nodes": [{"id": 'alpha', "agent": 'claude', "prompt": 'hi', "target": {"kind": 'local', "bootstrap": 'kimi', "shell": 'sh'}}]}),
         encoding="utf-8",
     )
 
@@ -789,28 +725,9 @@ def test_inspect_command_outputs_launch_summary(tmp_path, monkeypatch):
     (home / ".profile").write_text('if [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi\n', encoding="utf-8")
     monkeypatch.setattr("agentflow.local_shell.Path.home", lambda: home)
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-demo
-working_dir: .
-nodes:
-  - id: plan
-    agent: codex
-    model: gpt-5
-    prompt: "Reply with exactly: codex ok"
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-      shell_interactive: true
-      shell_init: kimi
-
-  - id: review
-    agent: claude
-    depends_on: [plan]
-    prompt: |
-      Review this: {{ nodes.plan.output }}
-""",
+        json.dumps({"name": 'inspect-demo', "working_dir": '.', "nodes": [{"id": 'plan', "agent": 'codex', "model": 'gpt-5', "prompt": 'Reply with exactly: codex ok', "target": {"kind": 'local', "shell": 'bash', "shell_login": True, "shell_interactive": True, "shell_init": 'kimi'}}, {"id": 'review', "agent": 'claude', "depends_on": ['plan'], "prompt": 'Review this: {{ nodes.plan.output }}'}]}),
         encoding="utf-8",
     )
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -838,18 +755,9 @@ def test_inspect_command_summary_infers_login_and_interactive_from_shell_wrapper
     (home / ".profile").write_text('if [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi\n', encoding="utf-8")
     monkeypatch.setattr("agentflow.local_shell.Path.home", lambda: home)
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-wrapper-flags
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-    target:
-      kind: local
-      shell: "bash -lic 'kimi && {command}'"
-""",
+        json.dumps({"name": 'inspect-wrapper-flags', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi', "target": {"kind": 'local', "shell": "bash -lic 'kimi && {command}'"}}]}),
         encoding="utf-8",
     )
 
@@ -863,21 +771,9 @@ nodes:
 
 
 def test_inspect_command_node_filter_omits_unrelated_placeholder_note(tmp_path):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-node-filter
-working_dir: .
-nodes:
-  - id: plan
-    agent: codex
-    prompt: "Reply with exactly: codex ok"
-
-  - id: review
-    agent: claude
-    depends_on: [plan]
-    prompt: |
-      Review this: {{ nodes.plan.output }}
-""",
+        json.dumps({"name": 'inspect-node-filter', "working_dir": '.', "nodes": [{"id": 'plan', "agent": 'codex', "prompt": 'Reply with exactly: codex ok'}, {"id": 'review', "agent": 'claude', "depends_on": ['plan'], "prompt": 'Review this: {{ nodes.plan.output }}'}]}),
         encoding="utf-8",
     )
 
@@ -890,16 +786,9 @@ nodes:
 
 
 def test_inspect_command_omits_placeholder_note_for_plain_text_nodes_reference(tmp_path):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-plain-text-nodes
-working_dir: .
-nodes:
-  - id: plan
-    agent: codex
-    prompt: |
-      Explain why the string nodes.plan.output should stay literal in this doc example.
-""",
+        json.dumps({"name": 'inspect-plain-text-nodes', "working_dir": '.', "nodes": [{"id": 'plan', "agent": 'codex', "prompt": 'Explain why the string nodes.plan.output should stay literal in this doc example.'}]}),
         encoding="utf-8",
     )
 
@@ -911,15 +800,9 @@ nodes:
 
 
 def test_inspect_defaults_to_json_output_when_not_tty(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-auto-json
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-""",
+        json.dumps({"name": 'inspect-auto-json', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi'}]}),
         encoding="utf-8",
     )
     monkeypatch.setattr(agentflow.cli, "_stream_supports_tty_summary", lambda *, err: False)
@@ -939,15 +822,9 @@ nodes:
 
 
 def test_inspect_defaults_to_summary_output_on_tty(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-auto-summary
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-""",
+        json.dumps({"name": 'inspect-auto-summary', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi'}]}),
         encoding="utf-8",
     )
     monkeypatch.setattr(agentflow.cli, "_stream_supports_tty_summary", lambda *, err: True)
@@ -960,22 +837,9 @@ nodes:
 
 
 def test_inspect_command_supports_json_output_and_redacts_env(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-json
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: "Reply with exactly: claude ok"
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-      shell_interactive: true
-      shell_init: kimi
-""",
+        json.dumps({"name": 'inspect-json', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'Reply with exactly: claude ok', "target": {"kind": 'local', "shell": 'bash', "shell_login": True, "shell_interactive": True, "shell_init": 'kimi'}}]}),
         encoding="utf-8",
     )
     monkeypatch.setenv("ANTHROPIC_API_KEY", "super-secret")
@@ -1020,22 +884,9 @@ def test_inspect_command_supports_json_summary_output(tmp_path, monkeypatch):
     (home / ".profile").write_text('if [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi\n', encoding="utf-8")
     monkeypatch.setattr("agentflow.local_shell.Path.home", lambda: home)
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-json-summary
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: "Reply with exactly: claude ok"
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-      shell_interactive: true
-      shell_init: kimi
-""",
+        json.dumps({"name": 'inspect-json-summary', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'Reply with exactly: claude ok', "target": {"kind": 'local', "shell": 'bash', "shell_login": True, "shell_interactive": True, "shell_init": 'kimi'}}]}),
         encoding="utf-8",
     )
     monkeypatch.setenv("ANTHROPIC_API_KEY", "super-secret")
@@ -1082,19 +933,9 @@ def test_inspect_command_json_summary_warns_when_login_bash_has_no_user_startup_
     home.mkdir()
     monkeypatch.setattr("agentflow.local_shell.Path.home", lambda: home)
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-missing-login-startup
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-""",
+        json.dumps({"name": 'inspect-missing-login-startup', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi', "target": {"kind": 'local', "shell": 'bash', "shell_login": True}}]}),
         encoding="utf-8",
     )
 
@@ -1114,19 +955,9 @@ def test_inspect_command_json_summary_warns_when_login_bash_does_not_reach_bashr
     (home / ".bash_profile").write_text('export PATH="$HOME/bin:$PATH"\n', encoding="utf-8")
     monkeypatch.setattr("agentflow.local_shell.Path.home", lambda: home)
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-missing-bashrc-bridge
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: hi
-    target:
-      kind: local
-      bootstrap: kimi
-""",
+        json.dumps({"name": 'inspect-missing-bashrc-bridge', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'hi', "target": {"kind": 'local', "bootstrap": 'kimi'}}]}),
         encoding="utf-8",
     )
     monkeypatch.setenv("ANTHROPIC_API_KEY", "super-secret")
@@ -1152,19 +983,9 @@ def test_inspect_command_json_summary_warns_when_login_bash_shadows_profile_brid
     (home / ".bashrc").write_text("kimi(){ :; }\n", encoding="utf-8")
     monkeypatch.setattr("agentflow.local_shell.Path.home", lambda: home)
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-shadowed-bashrc-bridge
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: hi
-    target:
-      kind: local
-      bootstrap: kimi
-""",
+        json.dumps({"name": 'inspect-shadowed-bashrc-bridge', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'hi', "target": {"kind": 'local', "bootstrap": 'kimi'}}]}),
         encoding="utf-8",
     )
     monkeypatch.setenv("ANTHROPIC_API_KEY", "super-secret")
@@ -1196,20 +1017,9 @@ def test_inspect_command_json_summary_warns_when_login_auth_bridge_is_shadowed(t
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-shadowed-login-auth-bridge
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: anthropic
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-""",
+        json.dumps({"name": 'inspect-shadowed-login-auth-bridge', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'anthropic', "prompt": 'hi', "target": {"kind": 'local', "shell": 'bash', "shell_login": True}}]}),
         encoding="utf-8",
     )
 
@@ -1238,19 +1048,9 @@ def test_inspect_command_json_summary_warns_when_login_bash_startup_is_unreadabl
     login_file.chmod(0)
     monkeypatch.setattr("agentflow.local_shell.Path.home", lambda: home)
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-unreadable-bash-startup
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: hi
-    target:
-      kind: local
-      bootstrap: kimi
-""",
+        json.dumps({"name": 'inspect-unreadable-bash-startup', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'hi', "target": {"kind": 'local', "bootstrap": 'kimi'}}]}),
         encoding="utf-8",
     )
     monkeypatch.setenv("ANTHROPIC_API_KEY", "super-secret")
@@ -1276,19 +1076,9 @@ def test_inspect_command_json_summary_accepts_login_bash_startup_with_undecodabl
     (home / ".bashrc").write_text("kimi(){ :; }\n", encoding="utf-8")
     monkeypatch.setattr("agentflow.local_shell.Path.home", lambda: home)
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-undecodable-bash-startup
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: hi
-    target:
-      kind: local
-      bootstrap: kimi
-""",
+        json.dumps({"name": 'inspect-undecodable-bash-startup', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'hi', "target": {"kind": 'local', "bootstrap": 'kimi'}}]}),
         encoding="utf-8",
     )
     monkeypatch.setenv("ANTHROPIC_API_KEY", "super-secret")
@@ -1310,19 +1100,9 @@ def test_inspect_command_json_summary_warns_when_login_bash_reaches_missing_bash
     (home / ".profile").write_text('if [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi\n', encoding="utf-8")
     monkeypatch.setattr("agentflow.local_shell.Path.home", lambda: home)
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-missing-bashrc-file
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: hi
-    target:
-      kind: local
-      bootstrap: kimi
-""",
+        json.dumps({"name": 'inspect-missing-bashrc-file', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'hi', "target": {"kind": 'local', "bootstrap": 'kimi'}}]}),
         encoding="utf-8",
     )
     monkeypatch.setenv("ANTHROPIC_API_KEY", "super-secret")
@@ -1348,19 +1128,9 @@ def test_inspect_command_summary_includes_shell_bridge_for_shadowed_profile_brid
     (home / ".bashrc").write_text("kimi(){ :; }\n", encoding="utf-8")
     monkeypatch.setattr("agentflow.local_shell.Path.home", lambda: home)
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-shadowed-bashrc-bridge-summary
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: hi
-    target:
-      kind: local
-      bootstrap: kimi
-""",
+        json.dumps({"name": 'inspect-shadowed-bashrc-bridge-summary', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'hi', "target": {"kind": 'local', "bootstrap": 'kimi'}}]}),
         encoding="utf-8",
     )
     monkeypatch.setenv("ANTHROPIC_API_KEY", "super-secret")
@@ -1386,19 +1156,9 @@ def test_inspect_command_supports_kimi_bootstrap_shorthand(tmp_path, monkeypatch
     (home / ".profile").write_text('if [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi\n', encoding="utf-8")
     monkeypatch.setattr("agentflow.local_shell.Path.home", lambda: home)
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-bootstrap-shorthand
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: \"Reply with exactly: claude ok\"
-    target:
-      kind: local
-      bootstrap: kimi
-""",
+        json.dumps({"name": 'inspect-bootstrap-shorthand', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'Reply with exactly: claude ok', "target": {"kind": 'local', "bootstrap": 'kimi'}}]}),
         encoding="utf-8",
     )
     monkeypatch.setenv("ANTHROPIC_API_KEY", "super-secret")
@@ -1446,21 +1206,9 @@ def test_inspect_command_merges_extra_shell_init_with_kimi_bootstrap_shorthand(t
     (home / ".profile").write_text('if [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi\n', encoding="utf-8")
     monkeypatch.setattr("agentflow.local_shell.Path.home", lambda: home)
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-bootstrap-shell-init-merge
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: hi
-    target:
-      kind: local
-      bootstrap: kimi
-      shell_init:
-        - export EXTRA_FLAG=1
-""",
+        json.dumps({"name": 'inspect-bootstrap-shell-init-merge', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'hi', "target": {"kind": 'local', "bootstrap": 'kimi', "shell_init": ['export EXTRA_FLAG=1']}}]}),
         encoding="utf-8",
     )
     monkeypatch.setenv("ANTHROPIC_API_KEY", "super-secret")
@@ -1497,22 +1245,9 @@ nodes:
 
 
 def test_inspect_command_summary_notes_when_launch_env_overrides_current_base_url(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-base-url-override
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-      shell_interactive: true
-      shell_init: kimi
-""",
+        json.dumps({"name": 'inspect-base-url-override', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'hi', "target": {"kind": 'local', "shell": 'bash', "shell_login": True, "shell_interactive": True, "shell_init": 'kimi'}}]}),
         encoding="utf-8",
     )
     monkeypatch.setenv("ANTHROPIC_API_KEY", "super-secret")
@@ -1538,15 +1273,9 @@ nodes:
 
 
 def test_inspect_command_summary_warns_when_local_launch_inherits_current_base_url(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-base-url-inheritance
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-""",
+        json.dumps({"name": 'inspect-base-url-inheritance', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi'}]}),
         encoding="utf-8",
     )
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://open.bigmodel.cn/api/anthropic")
@@ -1568,18 +1297,9 @@ nodes:
 
 
 def test_inspect_command_summary_warns_when_explicit_claude_provider_leaves_base_url_inherited(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-explicit-claude-provider-base-url-inheritance
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider:
-      name: anthropic
-      api_key_env: ANTHROPIC_API_KEY
-    prompt: hi
-""",
+        json.dumps({"name": 'inspect-explicit-claude-provider-base-url-inheritance', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": {"name": 'anthropic', "api_key_env": 'ANTHROPIC_API_KEY'}, "prompt": 'hi'}]}),
         encoding="utf-8",
     )
     monkeypatch.setenv("ANTHROPIC_API_KEY", "super-secret")
@@ -1602,19 +1322,9 @@ nodes:
 
 
 def test_inspect_command_summary_warns_when_explicit_codex_provider_leaves_base_url_inherited(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-explicit-codex-provider-base-url-inheritance
-working_dir: .
-nodes:
-  - id: plan
-    agent: codex
-    provider:
-      name: openai
-      api_key_env: OPENAI_API_KEY
-      wire_api: responses
-    prompt: hi
-""",
+        json.dumps({"name": 'inspect-explicit-codex-provider-base-url-inheritance', "working_dir": '.', "nodes": [{"id": 'plan', "agent": 'codex', "provider": {"name": 'openai', "api_key_env": 'OPENAI_API_KEY', "wire_api": 'responses'}, "prompt": 'hi'}]}),
         encoding="utf-8",
     )
     monkeypatch.setenv("OPENAI_API_KEY", "super-secret")
@@ -1643,21 +1353,9 @@ def test_inspect_command_summary_uses_node_home_for_base_url_bootstrap_detection
         "export ANTHROPIC_BASE_URL=https://api.kimi.com/coding/\n",
         encoding="utf-8",
     )
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: inspect-home-base-url-bootstrap
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-    env:
-      HOME: {launch_home}
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-""",
+        json.dumps({"name": 'inspect-home-base-url-bootstrap', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi', "env": {"HOME": str(launch_home)}, "target": {"kind": 'local', "shell": 'bash', "shell_login": True}}]}),
         encoding="utf-8",
     )
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://open.bigmodel.cn/api/anthropic")
@@ -1671,17 +1369,9 @@ nodes:
 
 
 def test_inspect_command_summary_notes_when_node_env_clears_current_base_url(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-base-url-cleared
-working_dir: .
-nodes:
-  - id: plan
-    agent: codex
-    prompt: hi
-    env:
-      OPENAI_BASE_URL: ""
-""",
+        json.dumps({"name": 'inspect-base-url-cleared', "working_dir": '.', "nodes": [{"id": 'plan', "agent": 'codex', "prompt": 'hi', "env": {"OPENAI_BASE_URL": ''}}]}),
         encoding="utf-8",
     )
     monkeypatch.setenv("OPENAI_BASE_URL", "https://oai-relay.ctf.so/openai")
@@ -1706,18 +1396,9 @@ nodes:
 
 
 def test_inspect_command_summary_skips_current_base_url_inheritance_for_container_targets(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-base-url-inheritance-container
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-    target:
-      kind: container
-      image: python:3.11-slim
-""",
+        json.dumps({"name": 'inspect-base-url-inheritance-container', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi', "target": {"kind": 'container', "image": 'python:3.11-slim'}}]}),
         encoding="utf-8",
     )
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://open.bigmodel.cn/api/anthropic")
@@ -1731,17 +1412,9 @@ nodes:
 
 
 def test_inspect_command_summary_redacts_sensitive_launch_env_override_details(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-secret-override
-working_dir: .
-nodes:
-  - id: plan
-    agent: codex
-    prompt: hi
-    env:
-      OPENAI_API_KEY: node-secret
-""",
+        json.dumps({"name": 'inspect-secret-override', "working_dir": '.', "nodes": [{"id": 'plan', "agent": 'codex', "prompt": 'hi', "env": {"OPENAI_API_KEY": 'node-secret'}}]}),
         encoding="utf-8",
     )
     monkeypatch.setenv("OPENAI_API_KEY", "current-secret")
@@ -1760,19 +1433,9 @@ nodes:
 
 
 def test_inspect_command_summary_reports_bootstrap_auth_override_for_current_secret(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-bootstrap-auth-override
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: hi
-    target:
-      kind: local
-      bootstrap: kimi
-""",
+        json.dumps({"name": 'inspect-bootstrap-auth-override', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'hi', "target": {"kind": 'local', "bootstrap": 'kimi'}}]}),
         encoding="utf-8",
     )
     monkeypatch.setenv("ANTHROPIC_API_KEY", "current-secret")
@@ -1793,19 +1456,9 @@ nodes:
 
 
 def test_inspect_command_summary_keeps_bootstrap_auth_override_when_kimi_base_url_already_matches(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-bootstrap-auth-override-kimi-base-url
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: hi
-    target:
-      kind: local
-      bootstrap: kimi
-""",
+        json.dumps({"name": 'inspect-bootstrap-auth-override-kimi-base-url', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'hi', "target": {"kind": 'local', "bootstrap": 'kimi'}}]}),
         encoding="utf-8",
     )
     monkeypatch.setenv("ANTHROPIC_API_KEY", "current-secret")
@@ -1826,21 +1479,9 @@ nodes:
 
 
 def test_inspect_command_summary_reports_bootstrap_auth_override_for_launch_secret(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-bootstrap-auth-override-launch-secret
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: hi
-    env:
-      ANTHROPIC_API_KEY: launch-secret
-    target:
-      kind: local
-      bootstrap: kimi
-""",
+        json.dumps({"name": 'inspect-bootstrap-auth-override-launch-secret', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'hi', "env": {"ANTHROPIC_API_KEY": 'launch-secret'}, "target": {"kind": 'local', "bootstrap": 'kimi'}}]}),
         encoding="utf-8",
     )
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -1871,24 +1512,9 @@ def test_inspect_command_redacts_inline_shell_bootstrap_secrets(tmp_path, monkey
     (home / ".profile").write_text('if [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi\n', encoding="utf-8")
     monkeypatch.setattr("agentflow.local_shell.Path.home", lambda: home)
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-secret-shell-init
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-      shell_interactive: true
-      shell_init:
-        - export ANTHROPIC_API_KEY=super-secret-inline
-        - kimi
-""",
+        json.dumps({"name": 'inspect-secret-shell-init', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'hi', "target": {"kind": 'local', "shell": 'bash', "shell_login": True, "shell_interactive": True, "shell_init": ['export ANTHROPIC_API_KEY=super-secret-inline', 'kimi']}}]}),
         encoding="utf-8",
     )
     monkeypatch.setenv("ANTHROPIC_API_KEY", "super-secret")
@@ -1926,15 +1552,9 @@ nodes:
 
 
 def test_inspect_command_summary_shows_codex_login_fallback(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-codex-auth
-working_dir: .
-nodes:
-  - id: plan
-    agent: codex
-    prompt: hi
-""",
+        json.dumps({"name": 'inspect-codex-auth', "working_dir": '.', "nodes": [{"id": 'plan', "agent": 'codex', "prompt": 'hi'}]}),
         encoding="utf-8",
     )
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -1947,21 +1567,9 @@ nodes:
 
 
 def test_inspect_command_summary_mentions_codex_kimi_bootstrap_with_openai_env(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-codex-kimi-env
-working_dir: .
-nodes:
-  - id: plan
-    agent: codex
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-      shell_interactive: true
-      shell_init: kimi
-""",
+        json.dumps({"name": 'inspect-codex-kimi-env', "working_dir": '.', "nodes": [{"id": 'plan', "agent": 'codex', "prompt": 'hi', "target": {"kind": 'local', "shell": 'bash', "shell_login": True, "shell_interactive": True, "shell_init": 'kimi'}}]}),
         encoding="utf-8",
     )
     monkeypatch.setenv("OPENAI_API_KEY", "super-secret")
@@ -1976,21 +1584,9 @@ nodes:
 
 
 def test_inspect_command_summary_mentions_codex_kimi_bootstrap_for_login_fallback(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-codex-kimi-login
-working_dir: .
-nodes:
-  - id: plan
-    agent: codex
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-      shell_interactive: true
-      shell_init: kimi
-""",
+        json.dumps({"name": 'inspect-codex-kimi-login', "working_dir": '.', "nodes": [{"id": 'plan', "agent": 'codex', "prompt": 'hi', "target": {"kind": 'local', "shell": 'bash', "shell_login": True, "shell_interactive": True, "shell_init": 'kimi'}}]}),
         encoding="utf-8",
     )
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -2005,18 +1601,9 @@ nodes:
 
 
 def test_inspect_command_summary_treats_shell_prefix_openai_key_as_auth_source(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-codex-shell-prefix-openai-key
-working_dir: .
-nodes:
-  - id: plan
-    agent: codex
-    prompt: hi
-    target:
-      kind: local
-      shell: env OPENAI_API_KEY=test-shell-key bash -c
-""",
+        json.dumps({"name": 'inspect-codex-shell-prefix-openai-key', "working_dir": '.', "nodes": [{"id": 'plan', "agent": 'codex', "prompt": 'hi', "target": {"kind": 'local', "shell": 'env OPENAI_API_KEY=test-shell-key bash -c'}}]}),
         encoding="utf-8",
     )
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -2029,18 +1616,9 @@ nodes:
 
 
 def test_inspect_command_summary_does_not_treat_empty_shell_prefix_openai_key_as_auth_source(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-codex-shell-prefix-empty-openai-key
-working_dir: .
-nodes:
-  - id: plan
-    agent: codex
-    prompt: hi
-    target:
-      kind: local
-      shell: env OPENAI_API_KEY= bash -c
-""",
+        json.dumps({"name": 'inspect-codex-shell-prefix-empty-openai-key', "working_dir": '.', "nodes": [{"id": 'plan', "agent": 'codex', "prompt": 'hi', "target": {"kind": 'local', "shell": 'env OPENAI_API_KEY= bash -c'}}]}),
         encoding="utf-8",
     )
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -2053,19 +1631,9 @@ nodes:
 
 
 def test_inspect_command_summary_treats_shell_prefix_provider_key_as_auth_source(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-claude-shell-prefix-provider-key
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: anthropic
-    prompt: hi
-    target:
-      kind: local
-      shell: env ANTHROPIC_API_KEY=test-shell-key bash -c
-""",
+        json.dumps({"name": 'inspect-claude-shell-prefix-provider-key', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'anthropic', "prompt": 'hi', "target": {"kind": 'local', "shell": 'env ANTHROPIC_API_KEY=test-shell-key bash -c'}}]}),
         encoding="utf-8",
     )
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -2081,19 +1649,9 @@ def test_inspect_command_summary_treats_sourced_shell_file_as_auth_source(tmp_pa
     home = tmp_path / "home"
     home.mkdir()
     (home / ".anthropic.env").write_text("export ANTHROPIC_API_KEY=test-shell-key\n", encoding="utf-8")
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: inspect-claude-sourced-provider-key
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: anthropic
-    prompt: hi
-    target:
-      kind: local
-      shell: env HOME={home} bash -lc 'source ~/.anthropic.env && {{command}}'
-""",
+        json.dumps({"name": 'inspect-claude-sourced-provider-key', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'anthropic', "prompt": 'hi', "target": {"kind": 'local', "shell": f"env HOME={home} bash -lc 'source ~/.anthropic.env && {{command}}'"}}]}),
         encoding="utf-8",
     )
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -2109,19 +1667,9 @@ def test_inspect_command_summary_treats_bash_env_file_as_auth_source(tmp_path, m
     home = tmp_path / "home"
     home.mkdir()
     (home / "auth.env").write_text("export ANTHROPIC_API_KEY=test-shell-key\n", encoding="utf-8")
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: inspect-claude-bash-env-provider-key
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: anthropic
-    prompt: hi
-    target:
-      kind: local
-      shell: env HOME={home} BASH_ENV=$HOME/auth.env bash -c '{{command}}'
-""",
+        json.dumps({"name": 'inspect-claude-bash-env-provider-key', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'anthropic', "prompt": 'hi', "target": {"kind": 'local', "shell": f"env HOME={home} BASH_ENV=$HOME/auth.env bash -c '{{command}}'"}}]}),
         encoding="utf-8",
     )
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -2137,19 +1685,9 @@ def test_inspect_command_summary_ignores_bash_env_file_for_interactive_bash(tmp_
     home = tmp_path / "home"
     home.mkdir()
     (home / "auth.env").write_text("export ANTHROPIC_API_KEY=test-shell-key\n", encoding="utf-8")
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: inspect-claude-bash-env-interactive-provider-key
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: anthropic
-    prompt: hi
-    target:
-      kind: local
-      shell: env HOME={home} BASH_ENV=$HOME/auth.env bash -ic '{{command}}'
-""",
+        json.dumps({"name": 'inspect-claude-bash-env-interactive-provider-key', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'anthropic', "prompt": 'hi', "target": {"kind": 'local', "shell": f"env HOME={home} BASH_ENV=$HOME/auth.env bash -ic '{{command}}'"}}]}),
         encoding="utf-8",
     )
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -2167,22 +1705,9 @@ def test_inspect_command_summary_ignores_bash_env_file_for_structured_interactiv
     home = tmp_path / "home"
     home.mkdir()
     (home / "auth.env").write_text("export ANTHROPIC_API_KEY=test-shell-key\n", encoding="utf-8")
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: inspect-claude-bash-env-structured-interactive-provider-key
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: anthropic
-    env:
-      BASH_ENV: $HOME/auth.env
-    prompt: hi
-    target:
-      kind: local
-      shell: env HOME={home} bash
-      shell_interactive: true
-""",
+        json.dumps({"name": 'inspect-claude-bash-env-structured-interactive-provider-key', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'anthropic', "env": {"BASH_ENV": '$HOME/auth.env'}, "prompt": 'hi', "target": {"kind": 'local', "shell": f"env HOME={home} bash", "shell_interactive": True}}]}),
         encoding="utf-8",
     )
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -2200,21 +1725,9 @@ def test_inspect_command_summary_treats_node_env_bash_env_file_as_auth_source(tm
     home = tmp_path / "home"
     home.mkdir()
     (home / "auth.env").write_text("export ANTHROPIC_API_KEY=test-shell-key\n", encoding="utf-8")
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: inspect-claude-node-env-bash-env-provider-key
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: anthropic
-    env:
-      BASH_ENV: $HOME/auth.env
-    prompt: hi
-    target:
-      kind: local
-      shell: env HOME={home} bash -c '{{command}}'
-""",
+        json.dumps({"name": 'inspect-claude-node-env-bash-env-provider-key', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'anthropic', "env": {"BASH_ENV": '$HOME/auth.env'}, "prompt": 'hi', "target": {"kind": 'local', "shell": f"env HOME={home} bash -c '{{command}}'"}}]}),
         encoding="utf-8",
     )
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -2227,20 +1740,9 @@ nodes:
 
 
 def test_inspect_command_summary_treats_login_shell_startup_as_auth_source(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-claude-login-startup-provider-key
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: anthropic
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-""",
+        json.dumps({"name": 'inspect-claude-login-startup-provider-key', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'anthropic', "prompt": 'hi', "target": {"kind": 'local', "shell": 'bash', "shell_login": True}}]}),
         encoding="utf-8",
     )
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -2261,21 +1763,9 @@ def test_inspect_command_summary_uses_target_cwd_for_relative_login_startup_sour
     home.mkdir()
     (home / ".profile").write_text('if [ -f .bashrc ]; then . .bashrc; fi\n', encoding="utf-8")
     (home / ".bashrc").write_text("export ANTHROPIC_API_KEY=from-relative-bashrc\n", encoding="utf-8")
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: inspect-claude-relative-login-startup
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: anthropic
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-      cwd: {home}
-""",
+        json.dumps({"name": 'inspect-claude-relative-login-startup', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'anthropic', "prompt": 'hi', "target": {"kind": 'local', "shell": 'bash', "shell_login": True, "cwd": str(home)}}]}),
         encoding="utf-8",
     )
     monkeypatch.setenv("HOME", str(home))
@@ -2298,20 +1788,9 @@ def test_inspect_command_json_summary_recommends_shell_bridge_for_relative_login
     home.mkdir()
     (home / ".profile").write_text('if [ -f .bashrc ]; then . .bashrc; fi\n', encoding="utf-8")
     (home / ".bashrc").write_text("export ANTHROPIC_API_KEY=from-relative-bashrc\n", encoding="utf-8")
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-relative-login-startup-shell-bridge
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: anthropic
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-""",
+        json.dumps({"name": 'inspect-relative-login-startup-shell-bridge', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'anthropic', "prompt": 'hi', "target": {"kind": 'local', "shell": 'bash', "shell_login": True}}]}),
         encoding="utf-8",
     )
     monkeypatch.setenv("HOME", str(home))
@@ -2339,22 +1818,9 @@ def test_inspect_command_summary_uses_launch_env_for_login_startup_sources(tmp_p
         'if [ -n "${AGENTFLOW_KIMI_ENV_FILE:-}" ]; then . "$AGENTFLOW_KIMI_ENV_FILE"; fi\n',
         encoding="utf-8",
     )
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: inspect-claude-env-gated-login-startup
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: anthropic
-    prompt: hi
-    env:
-      AGENTFLOW_KIMI_ENV_FILE: {auth_file}
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-""",
+        json.dumps({"name": 'inspect-claude-env-gated-login-startup', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'anthropic', "prompt": 'hi', "env": {"AGENTFLOW_KIMI_ENV_FILE": str(auth_file)}, "target": {"kind": 'local', "shell": 'bash', "shell_login": True}}]}),
         encoding="utf-8",
     )
     monkeypatch.setenv("HOME", str(home))
@@ -2369,17 +1835,9 @@ nodes:
 
 
 def test_inspect_command_summary_reports_default_claude_auth_requirement_without_explicit_provider(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-default-claude-provider-auth
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-    target:
-      kind: local
-""",
+        json.dumps({"name": 'inspect-default-claude-provider-auth', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi', "target": {"kind": 'local'}}]}),
         encoding="utf-8",
     )
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -2394,25 +1852,9 @@ nodes:
 
 
 def test_inspect_command_summary_treats_custom_kimi_provider_shell_bootstrap_as_auth_source(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-custom-kimi-provider
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider:
-      name: kimi-proxy
-      base_url: https://api.kimi.com/coding/
-      api_key_env: ANTHROPIC_API_KEY
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-      shell_interactive: true
-      shell_init: kimi
-""",
+        json.dumps({"name": 'inspect-custom-kimi-provider', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": {"name": 'kimi-proxy', "base_url": 'https://api.kimi.com/coding/', "api_key_env": 'ANTHROPIC_API_KEY'}, "prompt": 'hi', "target": {"kind": 'local', "shell": 'bash', "shell_login": True, "shell_interactive": True, "shell_init": 'kimi'}}]}),
         encoding="utf-8",
     )
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -2428,26 +1870,9 @@ def test_inspect_command_summary_treats_custom_kimi_provider_env_base_url_shell_
     tmp_path,
     monkeypatch,
 ):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-custom-kimi-provider-env-base-url
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider:
-      name: kimi-proxy
-      api_key_env: ANTHROPIC_API_KEY
-      env:
-        ANTHROPIC_BASE_URL: https://api.kimi.com/coding/
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-      shell_interactive: true
-      shell_init: kimi
-""",
+        json.dumps({"name": 'inspect-custom-kimi-provider-env-base-url', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": {"name": 'kimi-proxy', "api_key_env": 'ANTHROPIC_API_KEY', "env": {"ANTHROPIC_BASE_URL": 'https://api.kimi.com/coding/'}}, "prompt": 'hi', "target": {"kind": 'local', "shell": 'bash', "shell_login": True, "shell_interactive": True, "shell_init": 'kimi'}}]}),
         encoding="utf-8",
     )
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -2460,19 +1885,9 @@ nodes:
 
 
 def test_inspect_command_summary_treats_anthropic_provider_kimi_bootstrap_as_auth_source(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-anthropic-provider-kimi-bootstrap
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: anthropic
-    prompt: hi
-    target:
-      kind: local
-      bootstrap: kimi
-""",
+        json.dumps({"name": 'inspect-anthropic-provider-kimi-bootstrap', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'anthropic', "prompt": 'hi', "target": {"kind": 'local', "bootstrap": 'kimi'}}]}),
         encoding="utf-8",
     )
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -2486,19 +1901,9 @@ nodes:
 
 
 def test_inspect_command_summary_reports_kimi_bootstrap_base_url_override_for_anthropic_provider(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-anthropic-provider-kimi-bootstrap-base-url-override
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: anthropic
-    prompt: hi
-    target:
-      kind: local
-      bootstrap: kimi
-""",
+        json.dumps({"name": 'inspect-anthropic-provider-kimi-bootstrap-base-url-override', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'anthropic', "prompt": 'hi', "target": {"kind": 'local', "bootstrap": 'kimi'}}]}),
         encoding="utf-8",
     )
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -2525,24 +1930,9 @@ nodes:
 
 
 def test_inspect_command_summary_prefers_kimi_helper_auth_over_node_env(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-kimi-helper-over-node-env
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: hi
-    env:
-      ANTHROPIC_API_KEY: node-secret
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-      shell_interactive: true
-      shell_init: kimi
-""",
+        json.dumps({"name": 'inspect-kimi-helper-over-node-env', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'hi', "env": {"ANTHROPIC_API_KEY": 'node-secret'}, "target": {"kind": 'local', "shell": 'bash', "shell_login": True, "shell_interactive": True, "shell_init": 'kimi'}}]}),
         encoding="utf-8",
     )
     monkeypatch.setenv("ANTHROPIC_API_KEY", "current-secret")
@@ -2555,15 +1945,9 @@ nodes:
 
 
 def test_inspect_command_reports_disabled_auto_preflight_for_plain_pipeline(tmp_path):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-no-preflight
-working_dir: .
-nodes:
-  - id: plan
-    agent: codex
-    prompt: "Reply with exactly: codex ok"
-""",
+        json.dumps({"name": 'inspect-no-preflight', "working_dir": '.', "nodes": [{"id": 'plan', "agent": 'codex', "prompt": 'Reply with exactly: codex ok'}]}),
         encoding="utf-8",
     )
 
@@ -2585,19 +1969,9 @@ def test_inspect_command_handles_symlinked_login_file_outside_home(tmp_path, mon
     (home / ".bash_profile").symlink_to(dotfiles / "bash_profile")
     (home / ".bashrc").write_text("export READY=1\n", encoding="utf-8")
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-symlinked-login-file
-working_dir: .
-nodes:
-  - id: plan
-    agent: codex
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-""",
+        json.dumps({"name": 'inspect-symlinked-login-file', "working_dir": '.', "nodes": [{"id": 'plan', "agent": 'codex', "prompt": 'hi', "target": {"kind": 'local', "shell": 'bash', "shell_login": True}}]}),
         encoding="utf-8",
     )
     monkeypatch.setattr("agentflow.local_shell.Path.home", lambda: home)
@@ -2617,21 +1991,9 @@ def test_inspect_command_uses_node_env_home_for_login_startup_summary(tmp_path, 
     launch_home = tmp_path / "launch-home"
     launch_home.mkdir()
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: inspect-home-env-login-startup
-working_dir: .
-nodes:
-  - id: plan
-    agent: codex
-    prompt: hi
-    env:
-      HOME: {launch_home}
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-""",
+        json.dumps({"name": 'inspect-home-env-login-startup', "working_dir": '.', "nodes": [{"id": 'plan', "agent": 'codex', "prompt": 'hi', "env": {"HOME": str(launch_home)}, "target": {"kind": 'local', "shell": 'bash', "shell_login": True}}]}),
         encoding="utf-8",
     )
     monkeypatch.setattr("agentflow.local_shell.Path.home", lambda: host_home)
@@ -2644,28 +2006,9 @@ nodes:
 
 
 def test_inspect_command_reports_auto_preflight_match_sources(tmp_path):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-preflight-matches
-working_dir: .
-nodes:
-  - id: plan
-    agent: codex
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-      shell_interactive: true
-      shell_init: kimi
-
-  - id: review
-    agent: claude
-    prompt: hi
-    target:
-      kind: local
-      shell: "bash -lic 'kimi && {command}'"
-""",
+        json.dumps({"name": 'inspect-preflight-matches', "working_dir": '.', "nodes": [{"id": 'plan', "agent": 'codex', "prompt": 'hi', "target": {"kind": 'local', "shell": 'bash', "shell_login": True, "shell_interactive": True, "shell_init": 'kimi'}}, {"id": 'review', "agent": 'claude', "prompt": 'hi', "target": {"kind": 'local', "shell": "bash -lic 'kimi && {command}'"}}]}),
         encoding="utf-8",
     )
 
@@ -2692,19 +2035,9 @@ nodes:
 
 
 def test_inspect_command_ignores_non_helper_kimi_substrings_in_auto_preflight(tmp_path):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-kimi-substrings
-working_dir: .
-nodes:
-  - id: plan
-    agent: codex
-    prompt: hi
-    target:
-      kind: local
-      shell: "bash -lc 'printf kimi-ready && {command}'"
-      shell_init: echo kimi-ready
-""",
+        json.dumps({"name": 'inspect-kimi-substrings', "working_dir": '.', "nodes": [{"id": 'plan', "agent": 'codex', "prompt": 'hi', "target": {"kind": 'local', "shell": "bash -lc 'printf kimi-ready && {command}'", "shell_init": 'echo kimi-ready'}}]}),
         encoding="utf-8",
     )
 
@@ -2721,19 +2054,9 @@ nodes:
 
 
 def test_inspect_command_ignores_plain_text_kimi_tokens_in_auto_preflight(tmp_path):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-kimi-plain-text
-working_dir: .
-nodes:
-  - id: plan
-    agent: codex
-    prompt: hi
-    target:
-      kind: local
-      shell: "bash -lc 'echo kimi && {command}'"
-      shell_init: echo kimi
-""",
+        json.dumps({"name": 'inspect-kimi-plain-text', "working_dir": '.', "nodes": [{"id": 'plan', "agent": 'codex', "prompt": 'hi', "target": {"kind": 'local', "shell": "bash -lc 'echo kimi && {command}'", "shell_init": 'echo kimi'}}]}),
         encoding="utf-8",
     )
 
@@ -2755,23 +2078,9 @@ def test_inspect_command_supports_shell_init_command_lists(tmp_path, monkeypatch
     (home / ".profile").write_text('if [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi\n', encoding="utf-8")
     monkeypatch.setattr("agentflow.local_shell.Path.home", lambda: home)
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-shell-init-list
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-      shell_interactive: true
-      shell_init:
-        - command -v kimi >/dev/null 2>&1
-        - kimi
-""",
+        json.dumps({"name": 'inspect-shell-init-list', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi', "target": {"kind": 'local', "shell": 'bash', "shell_login": True, "shell_interactive": True, "shell_init": ['command -v kimi >/dev/null 2>&1', 'kimi']}}]}),
         encoding="utf-8",
     )
 
@@ -2786,19 +2095,9 @@ nodes:
 
 
 def test_inspect_command_ignores_kimi_probe_commands_in_auto_preflight(tmp_path):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-kimi-probes
-working_dir: .
-nodes:
-  - id: plan
-    agent: codex
-    prompt: hi
-    target:
-      kind: local
-      shell: "bash -lc 'command -v kimi >/dev/null && {command}'"
-      shell_init: type kimi >/dev/null 2>&1
-""",
+        json.dumps({"name": 'inspect-kimi-probes', "working_dir": '.', "nodes": [{"id": 'plan', "agent": 'codex', "prompt": 'hi', "target": {"kind": 'local', "shell": "bash -lc 'command -v kimi >/dev/null && {command}'", "shell_init": 'type kimi >/dev/null 2>&1'}}]}),
         encoding="utf-8",
     )
 
@@ -2815,20 +2114,9 @@ nodes:
 
 
 def test_inspect_command_warns_when_kimi_shell_init_is_not_interactive(tmp_path):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-kimi-warning
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-      shell_init: kimi
-""",
+        json.dumps({"name": 'inspect-kimi-warning', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi', "target": {"kind": 'local', "shell": 'bash', "shell_login": True, "shell_init": 'kimi'}}]}),
         encoding="utf-8",
     )
 
@@ -2840,19 +2128,9 @@ nodes:
 
 
 def test_inspect_command_json_summary_warns_when_kimi_shell_init_disables_login_startup(tmp_path):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-kimi-noprofile
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-    target:
-      kind: local
-      shell: "bash --noprofile -lic '{command}'"
-      shell_init: kimi
-""",
+        json.dumps({"name": 'inspect-kimi-noprofile', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi', "target": {"kind": 'local', "shell": "bash --noprofile -lic '{command}'", "shell_init": 'kimi'}}]}),
         encoding="utf-8",
     )
 
@@ -2872,19 +2150,9 @@ nodes:
 
 
 def test_inspect_command_accepts_interactive_bash_rcfile_wrapper(tmp_path):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-kimi-rcfile
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-    target:
-      kind: local
-      shell: "bash --rcfile ~/.bashrc -ic '{command}'"
-      shell_init: kimi
-""",
+        json.dumps({"name": 'inspect-kimi-rcfile', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi', "target": {"kind": 'local', "shell": "bash --rcfile ~/.bashrc -ic '{command}'", "shell_init": 'kimi'}}]}),
         encoding="utf-8",
     )
 
@@ -2899,18 +2167,9 @@ def test_inspect_command_accepts_bash_env_kimi_wrapper(tmp_path):
     shell_env = tmp_path / "shell.env"
     shell_env.write_text("kimi(){ :; }\n", encoding="utf-8")
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: inspect-kimi-bash-env
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-    target:
-      kind: local
-      shell: \"env BASH_ENV={shell_env} bash -c 'kimi && {{command}}'\"
-""",
+        json.dumps({"name": 'inspect-kimi-bash-env', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi', "target": {"kind": 'local', "shell": f"env BASH_ENV={shell_env} bash -c 'kimi && {{command}}'"}}]}),
         encoding="utf-8",
     )
 
@@ -2935,18 +2194,9 @@ def test_inspect_command_accepts_bash_env_wrapper_that_sources_helper_file(tmp_p
     (home / "shell.env").write_text('source "$HOME/.agentflow-kimi"\n', encoding="utf-8")
     monkeypatch.setenv("HOME", str(home))
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-kimi-bash-env-source
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-    target:
-      kind: local
-      shell: "env BASH_ENV=$HOME/shell.env bash -c 'kimi && {command}'"
-""",
+        json.dumps({"name": 'inspect-kimi-bash-env-source', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi', "target": {"kind": 'local', "shell": "env BASH_ENV=$HOME/shell.env bash -c 'kimi && {command}'"}}]}),
         encoding="utf-8",
     )
 
@@ -2965,20 +2215,9 @@ nodes:
 
 
 def test_inspect_command_json_summary_includes_kimi_shell_init_warning(tmp_path):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-kimi-warning-json
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-      shell_init: kimi
-""",
+        json.dumps({"name": 'inspect-kimi-warning-json', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi', "target": {"kind": 'local', "shell": 'bash', "shell_login": True, "shell_init": 'kimi'}}]}),
         encoding="utf-8",
     )
 
@@ -2992,18 +2231,9 @@ nodes:
 
 
 def test_inspect_command_warns_when_explicit_kimi_shell_wrapper_is_not_interactive(tmp_path):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-kimi-wrapper-warning
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-    target:
-      kind: local
-      shell: "bash -lc 'kimi && {command}'"
-""",
+        json.dumps({"name": 'inspect-kimi-wrapper-warning', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi', "target": {"kind": 'local', "shell": "bash -lc 'kimi && {command}'"}}]}),
         encoding="utf-8",
     )
 
@@ -3015,18 +2245,9 @@ nodes:
 
 
 def test_inspect_command_detects_eval_style_kimi_wrapper_in_auto_preflight(tmp_path):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-kimi-eval-wrapper
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-    target:
-      kind: local
-      shell: "bash -lc 'eval \\\"$(kimi)\\\" && {command}'"
-""",
+        json.dumps({"name": "inspect-kimi-eval-wrapper", "working_dir": ".", "nodes": [{"id": "review", "agent": "claude", "prompt": "hi", "target": {"kind": "local", "shell": "bash -lc 'eval \"$(kimi)\" && {command}'"}}]}),
         encoding="utf-8",
     )
 
@@ -3046,18 +2267,9 @@ nodes:
 
 
 def test_inspect_command_detects_backtick_eval_kimi_wrapper_in_auto_preflight(tmp_path):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-kimi-backtick-eval-wrapper
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-    target:
-      kind: local
-      shell: "bash -lc 'eval `kimi` && {command}'"
-""",
+        json.dumps({"name": 'inspect-kimi-backtick-eval-wrapper', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi', "target": {"kind": 'local', "shell": "bash -lc 'eval `kimi` && {command}'"}}]}),
         encoding="utf-8",
     )
 
@@ -3077,18 +2289,9 @@ nodes:
 
 
 def test_inspect_command_detects_export_kimi_wrapper_in_auto_preflight(tmp_path):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-kimi-export-wrapper
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-    target:
-      kind: local
-      shell: "bash -lc 'export $(kimi) && {command}'"
-""",
+        json.dumps({"name": 'inspect-kimi-export-wrapper', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi', "target": {"kind": 'local', "shell": "bash -lc 'export $(kimi) && {command}'"}}]}),
         encoding="utf-8",
     )
 
@@ -3108,18 +2311,9 @@ nodes:
 
 
 def test_inspect_command_detects_env_var_eval_kimi_wrapper_in_auto_preflight(tmp_path):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-kimi-env-eval-wrapper
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-    target:
-      kind: local
-      shell: 'bash -lc ''KIMI_ENV="$(kimi)" && eval "$KIMI_ENV" && {command}'''
-""",
+        json.dumps({"name": 'inspect-kimi-env-eval-wrapper', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi', "target": {"kind": 'local', "shell": 'bash -lc \'KIMI_ENV="$(kimi)" && eval "$KIMI_ENV" && {command}\''}}]}),
         encoding="utf-8",
     )
 
@@ -3145,19 +2339,9 @@ def test_inspect_command_warns_when_bash_env_points_to_guarded_home_bashrc(tmp_p
         "case $- in\n    *i*) ;;\n      *) return;;\nesac\n\nkimi(){ :; }\n",
         encoding="utf-8",
     )
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-kimi-bashenv-bashrc-guard
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-    target:
-      kind: local
-      shell: "env BASH_ENV=$HOME/.bashrc bash -c"
-      shell_init: kimi
-""",
+        json.dumps({"name": 'inspect-kimi-bashenv-bashrc-guard', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi', "target": {"kind": 'local', "shell": 'env BASH_ENV=$HOME/.bashrc bash -c', "shell_init": 'kimi'}}]}),
         encoding="utf-8",
     )
 
@@ -3173,19 +2357,9 @@ nodes:
 
 
 def test_inspect_command_detects_kimi_agent_in_auto_preflight(tmp_path):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-kimi-agent-bootstrap
-working_dir: .
-nodes:
-  - id: review
-    agent: kimi
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_init: kimi
-""",
+        json.dumps({"name": 'inspect-kimi-agent-bootstrap', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'kimi', "prompt": 'hi', "target": {"kind": 'local', "shell": 'bash', "shell_init": 'kimi'}}]}),
         encoding="utf-8",
     )
 
@@ -3205,20 +2379,9 @@ nodes:
 
 
 def test_inspect_command_warns_when_kimi_shell_init_uses_non_bash_shell(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-non-bash-kimi
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: hi
-    target:
-      kind: local
-      shell: sh
-      shell_init: kimi
-""",
+        json.dumps({"name": 'inspect-non-bash-kimi', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'hi', "target": {"kind": 'local', "shell": 'sh', "shell_init": 'kimi'}}]}),
         encoding="utf-8",
     )
 
@@ -3236,15 +2399,9 @@ nodes:
 
 
 def test_inspect_command_resolves_default_kimi_provider_in_json(tmp_path):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-kimi-default-provider
-working_dir: .
-nodes:
-  - id: review
-    agent: kimi
-    prompt: hi
-""",
+        json.dumps({"name": 'inspect-kimi-default-provider', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'kimi', "prompt": 'hi'}]}),
         encoding="utf-8",
     )
 
@@ -3264,15 +2421,9 @@ nodes:
 
 
 def test_inspect_command_surfaces_default_kimi_provider_in_json_summary(tmp_path):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-kimi-default-provider-summary
-working_dir: .
-nodes:
-  - id: review
-    agent: kimi
-    prompt: hi
-""",
+        json.dumps({"name": 'inspect-kimi-default-provider-summary', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'kimi', "prompt": 'hi'}]}),
         encoding="utf-8",
     )
 
@@ -3291,20 +2442,9 @@ nodes:
     ],
 )
 def test_run_and_smoke_preflight_warn_when_kimi_shell_init_is_not_interactive(tmp_path, monkeypatch, command):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: kimi-preflight-warning
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-      shell_init: kimi
-""",
+        json.dumps({"name": 'kimi-preflight-warning', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi', "target": {"kind": 'local', "shell": 'bash', "shell_login": True, "shell_init": 'kimi'}}]}),
         encoding="utf-8",
     )
 
@@ -3343,20 +2483,9 @@ nodes:
     ],
 )
 def test_run_and_smoke_preflight_fail_when_kimi_shell_init_uses_non_bash_shell(tmp_path, monkeypatch, command):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: kimi-preflight-non-bash
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: hi
-    target:
-      kind: local
-      shell: sh
-      shell_init: kimi
-""",
+        json.dumps({"name": 'kimi-preflight-non-bash', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'hi', "target": {"kind": 'local', "shell": 'sh', "shell_init": 'kimi'}}]}),
         encoding="utf-8",
     )
 
@@ -3398,20 +2527,9 @@ def test_run_and_smoke_preflight_accepts_kimi_shell_init_when_login_shell_alread
     monkeypatch,
     command,
 ):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: codex-kimi-preflight-warning
-working_dir: .
-nodes:
-  - id: codex_plan
-    agent: codex
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-      shell_init: kimi
-""",
+        json.dumps({"name": 'codex-kimi-preflight-warning', "working_dir": '.', "nodes": [{"id": 'codex_plan', "agent": 'codex', "prompt": 'hi', "target": {"kind": 'local', "shell": 'bash', "shell_login": True, "shell_init": 'kimi'}}]}),
         encoding="utf-8",
     )
 
@@ -3461,19 +2579,9 @@ def test_run_and_smoke_preflight_skips_codex_auth_probe_when_kimi_shell_init_use
     monkeypatch,
     command,
 ):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: codex-kimi-preflight-non-bash
-working_dir: .
-nodes:
-  - id: codex_plan
-    agent: codex
-    prompt: hi
-    target:
-      kind: local
-      shell: sh
-      shell_init: kimi
-""",
+        json.dumps({"name": 'codex-kimi-preflight-non-bash', "working_dir": '.', "nodes": [{"id": 'codex_plan', "agent": 'codex', "prompt": 'hi', "target": {"kind": 'local', "shell": 'sh', "shell_init": 'kimi'}}]}),
         encoding="utf-8",
     )
 
@@ -3515,18 +2623,9 @@ nodes:
     ],
 )
 def test_run_and_smoke_preflight_warn_when_explicit_kimi_shell_wrapper_is_not_interactive(tmp_path, monkeypatch, command):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: kimi-wrapper-preflight-warning
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-    target:
-      kind: local
-      shell: "bash -lc 'kimi && {command}'"
-""",
+        json.dumps({"name": 'kimi-wrapper-preflight-warning', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi', "target": {"kind": 'local', "shell": "bash -lc 'kimi && {command}'"}}]}),
         encoding="utf-8",
     )
 
@@ -3565,18 +2664,9 @@ nodes:
     ],
 )
 def test_run_and_smoke_preflight_warn_when_eval_style_kimi_wrapper_is_not_interactive(tmp_path, monkeypatch, command):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: kimi-eval-wrapper-preflight-warning
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-    target:
-      kind: local
-      shell: "bash -lc 'eval \\\"$(kimi)\\\" && {command}'"
-""",
+        json.dumps({"name": "kimi-eval-wrapper-preflight-warning", "working_dir": ".", "nodes": [{"id": "review", "agent": "claude", "prompt": "hi", "target": {"kind": "local", "shell": "bash -lc 'eval \"$(kimi)\" && {command}'"}}]}),
         encoding="utf-8",
     )
 
@@ -3615,18 +2705,9 @@ nodes:
     ],
 )
 def test_run_and_smoke_preflight_warn_when_backtick_eval_kimi_wrapper_is_not_interactive(tmp_path, monkeypatch, command):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: kimi-backtick-wrapper-preflight-warning
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-    target:
-      kind: local
-      shell: "bash -lc 'eval `kimi` && {command}'"
-""",
+        json.dumps({"name": 'kimi-backtick-wrapper-preflight-warning', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi', "target": {"kind": 'local', "shell": "bash -lc 'eval `kimi` && {command}'"}}]}),
         encoding="utf-8",
     )
 
@@ -3658,23 +2739,9 @@ nodes:
 
 
 def test_inspect_command_redacts_auth_and_header_style_env_keys(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-redaction
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-    provider:
-      name: kimi
-      base_url: https://api.kimi.com/coding/
-      api_key_env: ANTHROPIC_API_KEY
-      env:
-        UPSTREAM_AUTH_HEADER: Bearer top-secret
-      headers:
-        Authorization: Bearer top-secret
-""",
+        json.dumps({"name": 'inspect-redaction', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi', "provider": {"name": 'kimi', "base_url": 'https://api.kimi.com/coding/', "api_key_env": 'ANTHROPIC_API_KEY', "env": {"UPSTREAM_AUTH_HEADER": 'Bearer top-secret'}, "headers": {"Authorization": 'Bearer top-secret'}}}]}),
         encoding="utf-8",
     )
     monkeypatch.setenv("ANTHROPIC_API_KEY", "super-secret")
@@ -3690,17 +2757,9 @@ nodes:
 
 
 def test_inspect_command_summary_shows_resolved_provider(tmp_path):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-provider
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    model: claude-sonnet-4-5
-    prompt: hi
-""",
+        json.dumps({"name": 'inspect-provider', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "model": 'claude-sonnet-4-5', "prompt": 'hi'}]}),
         encoding="utf-8",
     )
 
@@ -3712,23 +2771,9 @@ nodes:
 
 
 def test_inspect_command_prefers_node_env_auth_source_over_provider_env(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-node-env-auth
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-    env:
-      ANTHROPIC_API_KEY: node-secret
-    provider:
-      name: kimi-proxy
-      base_url: https://example.test/anthropic
-      api_key_env: ANTHROPIC_API_KEY
-      env:
-        ANTHROPIC_API_KEY: provider-secret
-""",
+        json.dumps({"name": 'inspect-node-env-auth', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi', "env": {"ANTHROPIC_API_KEY": 'node-secret'}, "provider": {"name": 'kimi-proxy', "base_url": 'https://example.test/anthropic', "api_key_env": 'ANTHROPIC_API_KEY', "env": {"ANTHROPIC_API_KEY": 'provider-secret'}}}]}),
         encoding="utf-8",
     )
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -3741,23 +2786,9 @@ nodes:
 
 
 def test_inspect_command_surfaces_skills_and_mcp_names(tmp_path):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-integrations
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-    skills: [repo-map, release-notes]
-    mcps:
-      - name: github
-        transport: streamable_http
-        url: https://example.com/mcp
-      - name: filesystem
-        command: npx
-        args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
-""",
+        json.dumps({"name": 'inspect-integrations', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi', "skills": ['repo-map', 'release-notes'], "mcps": [{"name": 'github', "transport": 'streamable_http', "url": 'https://example.com/mcp'}, {"name": 'filesystem', "command": 'npx', "args": ['-y', '@modelcontextprotocol/server-filesystem', '.']}]}]}),
         encoding="utf-8",
     )
 
@@ -3776,15 +2807,9 @@ nodes:
 
 
 def test_inspect_command_rejects_unknown_nodes(tmp_path):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-error
-working_dir: .
-nodes:
-  - id: alpha
-    agent: codex
-    prompt: hi
-""",
+        json.dumps({"name": 'inspect-error', "working_dir": '.', "nodes": [{"id": 'alpha', "agent": 'codex', "prompt": 'hi'}]}),
         encoding="utf-8",
     )
 
@@ -4818,7 +3843,7 @@ def test_run_runs_preflight_for_explicit_bundled_pipeline_path(monkeypatch):
     ],
 )
 def test_run_and_smoke_bundled_preflight_applies_pipeline_shell_checks(monkeypatch, command):
-    bundled_path = str((Path.cwd() / "examples/local-real-agents-kimi-smoke.yaml").resolve())
+    bundled_path = str((Path.cwd() / "examples/local-real-agents-kimi-smoke.py").resolve())
 
     monkeypatch.setattr(
         agentflow.cli,
@@ -5752,22 +4777,9 @@ def test_smoke_runs_when_bundled_preflight_warns(monkeypatch):
 
 
 def test_smoke_keeps_expected_launch_env_override_out_of_preflight_warning_state(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "bundled-smoke.yaml"
+    pipeline_path = tmp_path / "bundled-smoke.json"
     pipeline_path.write_text(
-        """name: bundled-smoke
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-      shell_interactive: true
-      shell_init: kimi
-""",
+        json.dumps({"name": 'bundled-smoke', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'hi', "target": {"kind": 'local', "shell": 'bash', "shell_login": True, "shell_interactive": True, "shell_init": 'kimi'}}]}),
         encoding="utf-8",
     )
     captured: dict[str, object] = {}
@@ -7074,21 +6086,9 @@ def test_doctor_with_pipeline_path_accepts_claude_anthropic_provider_credentials
     tmp_path,
     monkeypatch,
 ):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: doctor-anthropic-provider-kimi-bootstrap
-working_dir: .
-nodes:
-  - id: claude_review
-    agent: claude
-    provider: anthropic
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_init: kimi
-      shell_interactive: true
-""",
+        json.dumps({"name": 'doctor-anthropic-provider-kimi-bootstrap', "working_dir": '.', "nodes": [{"id": 'claude_review', "agent": 'claude', "provider": 'anthropic', "prompt": 'hi', "target": {"kind": 'local', "shell": 'bash', "shell_init": 'kimi', "shell_interactive": True}}]}),
         encoding="utf-8",
     )
     _mock_custom_kimi_preflight(monkeypatch)
@@ -7114,21 +6114,9 @@ def test_doctor_with_pipeline_path_json_includes_kimi_bootstrap_base_url_overrid
     tmp_path,
     monkeypatch,
 ):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: doctor-anthropic-provider-kimi-bootstrap-json
-working_dir: .
-nodes:
-  - id: claude_review
-    agent: claude
-    provider: anthropic
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_init: kimi
-      shell_interactive: true
-""",
+        json.dumps({"name": 'doctor-anthropic-provider-kimi-bootstrap-json', "working_dir": '.', "nodes": [{"id": 'claude_review', "agent": 'claude', "provider": 'anthropic', "prompt": 'hi', "target": {"kind": 'local', "shell": 'bash', "shell_init": 'kimi', "shell_interactive": True}}]}),
         encoding="utf-8",
     )
     _mock_custom_kimi_preflight(monkeypatch)
@@ -8041,23 +7029,9 @@ def test_doctor_with_pipeline_path_reports_when_launch_env_clears_current_provid
     tmp_path,
     monkeypatch,
 ):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: doctor-kimi-bootstrap-key-clear
-working_dir: .
-nodes:
-  - id: claude_review
-    agent: claude
-    provider: kimi
-    prompt: hi
-    env:
-      ANTHROPIC_API_KEY: ""
-    target:
-      kind: local
-      shell: bash
-      shell_init: kimi
-      shell_interactive: true
-""",
+        json.dumps({"name": 'doctor-kimi-bootstrap-key-clear', "working_dir": '.', "nodes": [{"id": 'claude_review', "agent": 'claude', "provider": 'kimi', "prompt": 'hi', "env": {"ANTHROPIC_API_KEY": ''}, "target": {"kind": 'local', "shell": 'bash', "shell_init": 'kimi', "shell_interactive": True}}]}),
         encoding="utf-8",
     )
     _mock_custom_kimi_preflight(monkeypatch)
@@ -8130,21 +7104,9 @@ def test_doctor_with_pipeline_path_uses_target_cwd_for_relative_login_startup_so
     home.mkdir()
     (home / ".profile").write_text('if [ -f .bashrc ]; then . .bashrc; fi\n', encoding="utf-8")
     (home / ".bashrc").write_text("export ANTHROPIC_API_KEY=from-relative-bashrc\n", encoding="utf-8")
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: doctor-relative-login-startup
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: anthropic
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-      cwd: {home}
-""",
+        json.dumps({"name": 'doctor-relative-login-startup', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'anthropic', "prompt": 'hi', "target": {"kind": 'local', "shell": 'bash', "shell_login": True, "cwd": str(home)}}]}),
         encoding="utf-8",
     )
 
@@ -8230,22 +7192,9 @@ def test_doctor_with_pipeline_path_accepts_provider_credentials_from_login_start
         'if [ -n "${AGENTFLOW_KIMI_ENV_FILE:-}" ]; then . "$AGENTFLOW_KIMI_ENV_FILE"; fi\n',
         encoding="utf-8",
     )
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: doctor-env-gated-login-startup
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: anthropic
-    prompt: hi
-    env:
-      AGENTFLOW_KIMI_ENV_FILE: {auth_file}
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-""",
+        json.dumps({"name": 'doctor-env-gated-login-startup', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'anthropic', "prompt": 'hi', "env": {"AGENTFLOW_KIMI_ENV_FILE": str(auth_file)}, "target": {"kind": 'local', "shell": 'bash', "shell_login": True}}]}),
         encoding="utf-8",
     )
     real_subprocess_run = subprocess.run
@@ -8597,22 +7546,9 @@ def test_doctor_with_pipeline_path_reports_auto_preflight_metadata_in_json(monke
 
 
 def test_doctor_with_pipeline_path_reports_expected_launch_env_override_as_ok(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: doctor-base-url-override
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-      shell_interactive: true
-      shell_init: kimi
-""",
+        json.dumps({"name": 'doctor-base-url-override', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'hi', "target": {"kind": 'local', "shell": 'bash', "shell_login": True, "shell_interactive": True, "shell_init": 'kimi'}}]}),
         encoding="utf-8",
     )
     _mock_custom_kimi_preflight(monkeypatch)
@@ -8632,19 +7568,9 @@ nodes:
 
 
 def test_doctor_with_pipeline_path_reports_bootstrap_auth_override_as_ok(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: doctor-bootstrap-auth-override
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: hi
-    target:
-      kind: local
-      bootstrap: kimi
-""",
+        json.dumps({"name": 'doctor-bootstrap-auth-override', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'hi', "target": {"kind": 'local', "bootstrap": 'kimi'}}]}),
         encoding="utf-8",
     )
     _mock_custom_kimi_preflight(monkeypatch)
@@ -8665,19 +7591,9 @@ nodes:
 
 
 def test_doctor_with_pipeline_path_keeps_bootstrap_auth_override_when_kimi_base_url_already_matches(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: doctor-bootstrap-auth-override-kimi-base-url
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: hi
-    target:
-      kind: local
-      bootstrap: kimi
-""",
+        json.dumps({"name": 'doctor-bootstrap-auth-override-kimi-base-url', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'hi', "target": {"kind": 'local', "bootstrap": 'kimi'}}]}),
         encoding="utf-8",
     )
     _mock_custom_kimi_preflight(monkeypatch)
@@ -8712,22 +7628,9 @@ nodes:
 
 
 def test_doctor_with_pipeline_path_json_includes_launch_env_override_context(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: doctor-base-url-override-json
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-      shell_interactive: true
-      shell_init: kimi
-""",
+        json.dumps({"name": 'doctor-base-url-override-json', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'hi', "target": {"kind": 'local', "shell": 'bash', "shell_login": True, "shell_interactive": True, "shell_init": 'kimi'}}]}),
         encoding="utf-8",
     )
     _mock_custom_kimi_preflight(monkeypatch)
@@ -8774,19 +7677,9 @@ nodes:
 
 
 def test_doctor_with_pipeline_path_json_includes_bootstrap_auth_override_context(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: doctor-bootstrap-auth-override-json
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: hi
-    target:
-      kind: local
-      bootstrap: kimi
-""",
+        json.dumps({"name": 'doctor-bootstrap-auth-override-json', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'hi', "target": {"kind": 'local', "bootstrap": 'kimi'}}]}),
         encoding="utf-8",
     )
     _mock_custom_kimi_preflight(monkeypatch)
@@ -8833,21 +7726,9 @@ nodes:
 
 
 def test_doctor_with_pipeline_path_reports_bootstrap_auth_override_for_launch_secret(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: doctor-bootstrap-auth-override-launch-secret
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: hi
-    env:
-      ANTHROPIC_API_KEY: launch-secret
-    target:
-      kind: local
-      bootstrap: kimi
-""",
+        json.dumps({"name": 'doctor-bootstrap-auth-override-launch-secret', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'hi', "env": {"ANTHROPIC_API_KEY": 'launch-secret'}, "target": {"kind": 'local', "bootstrap": 'kimi'}}]}),
         encoding="utf-8",
     )
     _mock_custom_kimi_preflight(monkeypatch)
@@ -8883,19 +7764,9 @@ nodes:
 
 
 def test_doctor_with_custom_kimi_pipeline_uses_pipeline_specific_preflight(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: doctor-custom-kimi
-working_dir: .
-local_target_defaults:
-  bootstrap: kimi
-nodes:
-  - id: review
-    agent: claude
-    executable: custom-claude
-    provider: kimi
-    prompt: hi
-""",
+        json.dumps({"name": 'doctor-custom-kimi', "working_dir": '.', "local_target_defaults": {"bootstrap": 'kimi'}, "nodes": [{"id": 'review', "agent": 'claude', "executable": 'custom-claude', "provider": 'kimi', "prompt": 'hi'}]}),
         encoding="utf-8",
     )
 
@@ -8928,16 +7799,9 @@ nodes:
 
 
 def test_doctor_with_local_kimi_provider_pipeline_reports_auto_preflight_enabled(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: doctor-provider-kimi-auto-preflight
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: hi
-""",
+        json.dumps({"name": 'doctor-provider-kimi-auto-preflight', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'hi'}]}),
         encoding="utf-8",
     )
 
@@ -8961,15 +7825,9 @@ nodes:
 
 
 def test_doctor_with_local_kimi_agent_pipeline_reports_auto_preflight_enabled(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: doctor-kimi-agent-auto-preflight
-working_dir: .
-nodes:
-  - id: review
-    agent: kimi
-    prompt: hi
-""",
+        json.dumps({"name": 'doctor-kimi-agent-auto-preflight', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'kimi', "prompt": 'hi'}]}),
         encoding="utf-8",
     )
 
@@ -8993,16 +7851,9 @@ nodes:
 
 
 def test_run_with_local_kimi_provider_pipeline_auto_preflight_runs_pipeline_checks(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: run-provider-kimi-auto-preflight
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: hi
-""",
+        json.dumps({"name": 'run-provider-kimi-auto-preflight', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'hi'}]}),
         encoding="utf-8",
     )
 
@@ -9036,19 +7887,9 @@ nodes:
 
 
 def test_run_with_custom_kimi_provider_api_key_env_pipeline_auto_preflight_runs_pipeline_checks(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: run-provider-kimi-custom-key-auto-preflight
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider:
-      name: kimi-proxy
-      base_url: https://api.kimi.com/coding/
-      api_key_env: KIMI_PROXY_KEY
-    prompt: hi
-""",
+        json.dumps({"name": 'run-provider-kimi-custom-key-auto-preflight', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": {"name": 'kimi-proxy', "base_url": 'https://api.kimi.com/coding/', "api_key_env": 'KIMI_PROXY_KEY'}, "prompt": 'hi'}]}),
         encoding="utf-8",
     )
 
@@ -9082,15 +7923,9 @@ nodes:
 
 
 def test_doctor_with_pipeline_path_warns_when_local_launch_inherits_current_base_url(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: doctor-base-url-inheritance
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-""",
+        json.dumps({"name": 'doctor-base-url-inheritance', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi'}]}),
         encoding="utf-8",
     )
     monkeypatch.setattr(agentflow.cli, "build_pipeline_local_claude_readiness_checks", lambda pipeline: [])
@@ -9108,18 +7943,9 @@ nodes:
 
 
 def test_doctor_with_pipeline_path_warns_when_explicit_claude_provider_leaves_base_url_inherited(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: doctor-explicit-claude-provider-base-url-inheritance
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider:
-      name: anthropic
-      api_key_env: ANTHROPIC_API_KEY
-    prompt: hi
-""",
+        json.dumps({"name": 'doctor-explicit-claude-provider-base-url-inheritance', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": {"name": 'anthropic', "api_key_env": 'ANTHROPIC_API_KEY'}, "prompt": 'hi'}]}),
         encoding="utf-8",
     )
     monkeypatch.setattr(agentflow.cli, "build_pipeline_local_claude_readiness_checks", lambda pipeline: [])
@@ -9137,19 +7963,9 @@ nodes:
 
 
 def test_doctor_with_pipeline_path_warns_when_explicit_codex_provider_leaves_base_url_inherited(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: doctor-explicit-codex-provider-base-url-inheritance
-working_dir: .
-nodes:
-  - id: plan
-    agent: codex
-    provider:
-      name: openai
-      api_key_env: OPENAI_API_KEY
-      wire_api: responses
-    prompt: hi
-""",
+        json.dumps({"name": 'doctor-explicit-codex-provider-base-url-inheritance', "working_dir": '.', "nodes": [{"id": 'plan', "agent": 'codex', "provider": {"name": 'openai', "api_key_env": 'OPENAI_API_KEY', "wire_api": 'responses'}, "prompt": 'hi'}]}),
         encoding="utf-8",
     )
     monkeypatch.setattr(agentflow.cli, "build_pipeline_local_codex_readiness_checks", lambda pipeline: [])
@@ -9174,21 +7990,9 @@ def test_doctor_with_pipeline_path_uses_node_home_for_base_url_bootstrap_detecti
         "export ANTHROPIC_BASE_URL=https://api.kimi.com/coding/\n",
         encoding="utf-8",
     )
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: doctor-home-base-url-bootstrap
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-    env:
-      HOME: {launch_home}
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-""",
+        json.dumps({"name": 'doctor-home-base-url-bootstrap', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi', "env": {"HOME": str(launch_home)}, "target": {"kind": 'local', "shell": 'bash', "shell_login": True}}]}),
         encoding="utf-8",
     )
     monkeypatch.setattr(agentflow.cli, "build_pipeline_local_claude_readiness_checks", lambda pipeline: [])
@@ -9205,17 +8009,9 @@ nodes:
 
 
 def test_doctor_with_pipeline_path_reports_when_node_env_clears_current_base_url(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: doctor-base-url-cleared
-working_dir: .
-nodes:
-  - id: plan
-    agent: codex
-    prompt: hi
-    env:
-      OPENAI_BASE_URL: ""
-""",
+        json.dumps({"name": 'doctor-base-url-cleared', "working_dir": '.', "nodes": [{"id": 'plan', "agent": 'codex', "prompt": 'hi', "env": {"OPENAI_BASE_URL": ''}}]}),
         encoding="utf-8",
     )
     monkeypatch.setattr(agentflow.cli, "build_pipeline_local_codex_readiness_checks", lambda pipeline: [])
@@ -9233,15 +8029,9 @@ nodes:
 
 
 def test_doctor_with_pipeline_path_json_includes_launch_env_inheritance_context(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: doctor-base-url-inheritance-json
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-""",
+        json.dumps({"name": 'doctor-base-url-inheritance-json', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "prompt": 'hi'}]}),
         encoding="utf-8",
     )
     monkeypatch.setattr(agentflow.cli, "build_pipeline_local_claude_readiness_checks", lambda pipeline: [])
@@ -9268,22 +8058,9 @@ nodes:
 
 
 def test_doctor_without_path_reports_bundled_smoke_override_as_ok(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "bundled-smoke.yaml"
+    pipeline_path = tmp_path / "bundled-smoke.json"
     pipeline_path.write_text(
-        """name: bundled-smoke
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-      shell_interactive: true
-      shell_init: kimi
-""",
+        json.dumps({"name": 'bundled-smoke', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'hi', "target": {"kind": 'local', "shell": 'bash', "shell_login": True, "shell_interactive": True, "shell_init": 'kimi'}}]}),
         encoding="utf-8",
     )
     _disable_local_readiness_probes(monkeypatch)
@@ -9306,20 +8083,9 @@ nodes:
 
 
 def test_doctor_without_path_applies_bundled_pipeline_shell_checks(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "bundled-smoke.yaml"
+    pipeline_path = tmp_path / "bundled-smoke.json"
     pipeline_path.write_text(
-        """name: bundled-smoke
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: hi
-    target:
-      kind: local
-      shell: sh
-      shell_init: kimi
-""",
+        json.dumps({"name": 'bundled-smoke', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'kimi', "prompt": 'hi', "target": {"kind": 'local', "shell": 'sh', "shell_init": 'kimi'}}]}),
         encoding="utf-8",
     )
 
@@ -9507,21 +8273,9 @@ def test_doctor_with_pipeline_path_warns_for_custom_home_login_startup(tmp_path,
 
     custom_home = tmp_path / "custom-home"
     custom_home.mkdir()
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: doctor-noisy-shell-bridge
-working_dir: .
-nodes:
-  - id: plan
-    agent: codex
-    prompt: hi
-    env:
-      OPENAI_BASE_URL: ""
-    target:
-      kind: local
-      shell: "env HOME={custom_home} bash"
-      shell_login: true
-""",
+        json.dumps({"name": 'doctor-noisy-shell-bridge', "working_dir": '.', "nodes": [{"id": 'plan', "agent": 'codex', "prompt": 'hi', "env": {"OPENAI_BASE_URL": ''}, "target": {"kind": 'local', "shell": f"env HOME={custom_home} bash", "shell_login": True}}]}),
         encoding="utf-8",
     )
 
@@ -9581,21 +8335,9 @@ def test_check_local_warns_for_custom_home_login_startup(tmp_path, monkeypatch):
 
     custom_home = tmp_path / "custom-home"
     custom_home.mkdir()
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: doctor-noisy-shell-bridge
-working_dir: .
-nodes:
-  - id: plan
-    agent: codex
-    prompt: hi
-    env:
-      OPENAI_BASE_URL: ""
-    target:
-      kind: local
-      shell: "env HOME={custom_home} bash"
-      shell_login: true
-""",
+        json.dumps({"name": 'doctor-noisy-shell-bridge', "working_dir": '.', "nodes": [{"id": 'plan', "agent": 'codex', "prompt": 'hi', "env": {"OPENAI_BASE_URL": ''}, "target": {"kind": 'local', "shell": f"env HOME={custom_home} bash", "shell_login": True}}]}),
         encoding="utf-8",
     )
 
@@ -9648,21 +8390,9 @@ def test_doctor_with_pipeline_path_auto_includes_shell_bridge_when_auth_depends_
 
     custom_home = tmp_path / "custom-home"
     custom_home.mkdir()
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: doctor-shell-bridge-needed-for-auth
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: anthropic
-    prompt: hi
-    target:
-      kind: local
-      shell: "env HOME={custom_home} bash"
-      shell_login: true
-      shell_interactive: true
-""",
+        json.dumps({"name": 'doctor-shell-bridge-needed-for-auth', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'anthropic', "prompt": 'hi', "target": {"kind": 'local', "shell": f"env HOME={custom_home} bash", "shell_login": True, "shell_interactive": True}}]}),
         encoding="utf-8",
     )
 
@@ -9701,21 +8431,9 @@ def test_run_auto_preflight_stops_when_auth_depends_on_login_startup(tmp_path, m
 
     custom_home = tmp_path / "custom-home"
     custom_home.mkdir()
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: run-shell-startup-auth-preflight
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: anthropic
-    prompt: hi
-    target:
-      kind: local
-      shell: "env HOME={custom_home} bash"
-      shell_login: true
-      shell_interactive: true
-""",
+        json.dumps({"name": 'run-shell-startup-auth-preflight', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'anthropic', "prompt": 'hi', "target": {"kind": 'local', "shell": f"env HOME={custom_home} bash", "shell_login": True, "shell_interactive": True}}]}),
         encoding="utf-8",
     )
 
@@ -9763,21 +8481,9 @@ def test_run_auto_preflight_fails_closed_when_launch_inspection_errors(tmp_path,
 
     custom_home = tmp_path / "custom-home"
     custom_home.mkdir()
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: run-shell-startup-auth-inspection-error
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: anthropic
-    prompt: hi
-    target:
-      kind: local
-      shell: "env HOME={custom_home} bash"
-      shell_login: true
-      shell_interactive: true
-""",
+        json.dumps({"name": 'run-shell-startup-auth-inspection-error', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'anthropic', "prompt": 'hi', "target": {"kind": 'local', "shell": f"env HOME={custom_home} bash", "shell_login": True, "shell_interactive": True}}]}),
         encoding="utf-8",
     )
 
@@ -9821,21 +8527,9 @@ def test_doctor_with_pipeline_path_uses_pipeline_shell_bridge_for_custom_home(tm
 
     custom_home = tmp_path / "custom-home"
     custom_home.mkdir()
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: doctor-custom-home-shell-bridge
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: anthropic
-    prompt: hi
-    target:
-      kind: local
-      shell: "env HOME={custom_home} bash"
-      shell_login: true
-      shell_interactive: true
-""",
+        json.dumps({"name": 'doctor-custom-home-shell-bridge', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'claude', "provider": 'anthropic', "prompt": 'hi', "target": {"kind": 'local', "shell": f"env HOME={custom_home} bash", "shell_login": True, "shell_interactive": True}}]}),
         encoding="utf-8",
     )
 
@@ -9916,20 +8610,9 @@ print(json.dumps({\"exit_code\": result.exit_code, \"stdout\": result.stdout}))
 
 
 def test_run_command_executes_local_kimi_node_when_pipeline_lives_outside_repo(tmp_path, monkeypatch):
-    pipeline_path = tmp_path / "kimi-only.yaml"
+    pipeline_path = tmp_path / "kimi-only.json"
     pipeline_path.write_text(
-        """name: kimi-only
-working_dir: .
-nodes:
-  - id: review
-    agent: kimi
-    prompt: |
-      Reply with exactly: kimi ok
-    timeout_seconds: 30
-    success_criteria:
-      - kind: output_contains
-        value: kimi ok
-""",
+        json.dumps({"name": 'kimi-only', "working_dir": '.', "nodes": [{"id": 'review', "agent": 'kimi', "prompt": 'Reply with exactly: kimi ok\n', "timeout_seconds": 30, "success_criteria": [{"kind": 'output_contains', "value": 'kimi ok'}]}]}),
         encoding="utf-8",
     )
     monkeypatch.setenv("AGENTFLOW_KIMI_MOCK_RESPONSE", "kimi ok")
@@ -10009,21 +8692,9 @@ def test_smoke_failed_preflight_uses_pipeline_shell_bridge_for_custom_home(tmp_p
 
     custom_home = tmp_path / "custom-home"
     custom_home.mkdir()
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: smoke-custom-home-shell-bridge
-working_dir: .
-nodes:
-  - id: codex_plan
-    agent: codex
-    prompt: hi
-    target:
-      kind: local
-      bootstrap: kimi
-      shell: "env HOME={custom_home} bash"
-      shell_login: true
-      shell_interactive: true
-""",
+        json.dumps({"name": 'smoke-custom-home-shell-bridge', "working_dir": '.', "nodes": [{"id": 'codex_plan', "agent": 'codex', "prompt": 'hi', "target": {"kind": 'local', "bootstrap": 'kimi', "shell": f"env HOME={custom_home} bash", "shell_login": True, "shell_interactive": True}}]}),
         encoding="utf-8",
     )
 

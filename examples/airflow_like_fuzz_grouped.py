@@ -167,4 +167,4 @@ with DAG(
     fuzzer >> family_merge
     family_merge >> merge
 
-print(dag.to_yaml(), end="")
+print(dag.to_json())

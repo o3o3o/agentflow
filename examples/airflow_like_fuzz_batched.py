@@ -98,6 +98,40 @@ with DAG(
         ),
     )
 
+    monitor = codex(
+        task_id="monitor",
+        tools="read_write",
+        timeout_seconds=300,
+        schedule={
+            "every_seconds": 600,
+            "until_fanout_settles_from": "fuzzer",
+            "actuation": "output_json",
+        },
+        prompt=(
+            "You are the periodic campaign monitor for this 128-shard run.\n\n"
+            "Current tick: {{ current.tick_number }}\n"
+            "Tick started at: {{ current.tick_started_at }}\n"
+            "Total shards: {{ fanouts.fuzzer.size }}\n"
+            "Completed shards: {{ fanouts.fuzzer.summary.completed }}\n"
+            "Running shards: {{ fanouts.fuzzer.summary.running }}\n"
+            "Failed shards: {{ fanouts.fuzzer.summary.failed }}\n"
+            "Silent shards: {{ fanouts.fuzzer.summary.without_output }}\n\n"
+            "Each shard exposes full artifact logs you can inspect with grep.\n"
+            "{% for shard in fanouts.fuzzer.nodes %}\n"
+            "- {{ shard.id }} stdout={{ shard.artifacts.stdout_log }} stderr={{ shard.artifacts.stderr_log }}\n"
+            "{% endfor %}\n"
+            "Analyze underperformance and respond with strict JSON:\n"
+            "{\n"
+            '  "analysis": "short maintainer summary",\n'
+            '  "actions": [\n'
+            '    {"kind": "cancel", "node_ids": ["fuzzer_000"]},\n'
+            '    {"kind": "rerun", "node_ids": ["fuzzer_000"]}\n'
+            "  ]\n"
+            "}\n"
+            "Use an empty `actions` list when no live intervention is needed."
+        ),
+    )
+
     merge = codex(
         task_id="merge",
         timeout_seconds=300,
@@ -123,8 +157,8 @@ with DAG(
         ),
     )
 
-    init >> fuzzer
+    init >> [fuzzer, monitor]
     fuzzer >> batch_merge
-    batch_merge >> merge
+    [batch_merge, monitor] >> merge
 
-print(dag.to_yaml(), end="")
+print(dag.to_json())

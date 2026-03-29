@@ -29,7 +29,7 @@ cleanup() {
 trap cleanup EXIT
 
 pipeline_name="custom-kimi${CUSTOM_LOCAL_KIMI_PIPELINE_SUFFIX}-doctor"
-pipeline_path="$tmpdir/${pipeline_name}.yaml"
+pipeline_path="$tmpdir/${pipeline_name}.py"
 "$CUSTOM_LOCAL_KIMI_PIPELINE_WRITER" \
   "$pipeline_path" \
   "$pipeline_name" \

@@ -7,8 +7,6 @@ import json
 from os import PathLike
 from typing import Any
 
-import yaml
-
 from agentflow.specs import AgentKind, LocalTarget, NodeSpec, PipelineSpec
 
 
@@ -115,27 +113,6 @@ class DAG:
 
     def to_json(self, *, indent: int | None = 2) -> str:
         return json.dumps(self.to_payload(), indent=indent)
-
-    def to_yaml(self) -> str:
-        payload = json.loads(self.to_json(indent=None))
-        return yaml.dump(
-            payload,
-            Dumper=_ReadableYamlDumper,
-            sort_keys=False,
-            allow_unicode=False,
-        )
-
-
-class _ReadableYamlDumper(yaml.SafeDumper):
-    pass
-
-
-def _represent_readable_yaml_string(dumper: yaml.SafeDumper, value: str) -> yaml.ScalarNode:
-    style = "|" if "\n" in value else None
-    return dumper.represent_scalar("tag:yaml.org,2002:str", value, style=style)
-
-
-_ReadableYamlDumper.add_representer(str, _represent_readable_yaml_string)
 
 
 def _normalize_local_target(value: Any) -> Any:

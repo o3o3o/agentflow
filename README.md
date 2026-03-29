@@ -21,17 +21,15 @@ Scaffold and run a pipeline:
 
 ```bash
 agentflow templates
-agentflow init > pipeline.yaml
-agentflow validate pipeline.yaml
-agentflow run pipeline.yaml
+agentflow init > pipeline.py
+agentflow run pipeline.py
 ```
 
 Useful next commands:
 
 ```bash
-agentflow init repo-sweep.yaml --template codex-fanout-repo-sweep
-agentflow init repo-sweep-batched.yaml --template codex-repo-sweep-batched
-agentflow inspect pipeline.yaml
+agentflow init repo-sweep-batched.py --template codex-repo-sweep-batched
+agentflow inspect pipeline.py
 agentflow serve --host 127.0.0.1 --port 8000
 agentflow smoke
 ```
@@ -39,7 +37,6 @@ agentflow smoke
 ## Bundled Templates
 
 - `pipeline`: generic Codex/Claude/Kimi starter DAG
-- `codex-fanout-repo-sweep`: small repo review fanout
 - `codex-repo-sweep-batched`: large repo sweep with staged batch reducers
 - `local-kimi-smoke`: shortest real-agent local smoke DAG
 - `local-kimi-shell-init-smoke`: explicit `shell_init: kimi` smoke DAG
@@ -58,13 +55,12 @@ AgentFlow keeps the framework generic. The core fanout surface is:
 - `batches`
 - optional `derive`, plus matrix-only `include` and `exclude`
 
-Use these primitives directly in YAML or via the Python DSL helpers.
+Pipelines can also include a periodic local node with `schedule.every_seconds` and `schedule.until_fanout_settles_from`. That lets one collector run inside the same pipeline, inspect shard artifact logs on disk, and optionally issue cancel/rerun actions against a watched fanout group.
+
+Use these primitives via the Python DSL helpers.
 
 ## Examples
 
-The repo keeps two advanced fuzz examples as examples only, not as framework features:
-
-- `examples/airflow_like_fuzz_batched.py`
-- `examples/airflow_like_fuzz_grouped.py`
-
-Those examples show how to model a large shard campaign using only the generic fanout primitives.
+- `examples/airflow_like.py` -- basic DAG with static dependencies
+- `examples/airflow_like_fuzz_batched.py` -- 128-shard batched fuzz with periodic monitor
+- `examples/airflow_like_fuzz_grouped.py` -- 128-shard matrix fuzz with grouped reducers

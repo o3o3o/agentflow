@@ -1,23 +1,24 @@
 from __future__ import annotations
 
+import json
+
 from agentflow.loader import load_pipeline_from_data, load_pipeline_from_path, load_pipeline_from_text
+
+
+def _write_json_pipeline(path, data):
+    path.write_text(json.dumps(data), encoding="utf-8")
 
 
 def test_load_pipeline_from_path_expands_home_relative_working_dir(tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()
 
-    pipeline_path = tmp_path / "pipeline.yaml"
-    pipeline_path.write_text(
-        """name: home-working-dir
-working_dir: ~/workspace
-nodes:
-  - id: plan
-    agent: codex
-    prompt: hi
-""",
-        encoding="utf-8",
-    )
+    pipeline_path = tmp_path / "pipeline.json"
+    _write_json_pipeline(pipeline_path, {
+        "name": "home-working-dir",
+        "working_dir": "~/workspace",
+        "nodes": [{"id": "plan", "agent": "codex", "prompt": "hi"}],
+    })
 
     monkeypatch.setenv("HOME", str(home))
 
@@ -30,20 +31,19 @@ def test_load_pipeline_from_path_resolves_relative_cwd_from_expanded_home_workin
     home = tmp_path / "home"
     home.mkdir()
 
-    pipeline_path = tmp_path / "pipeline.yaml"
-    pipeline_path.write_text(
-        """name: home-working-dir-relative-cwd
-working_dir: ~/workspace
-nodes:
-  - id: plan
-    agent: codex
-    prompt: hi
-    target:
-      kind: local
-      cwd: task
-""",
-        encoding="utf-8",
-    )
+    pipeline_path = tmp_path / "pipeline.json"
+    _write_json_pipeline(pipeline_path, {
+        "name": "home-working-dir-relative-cwd",
+        "working_dir": "~/workspace",
+        "nodes": [
+            {
+                "id": "plan",
+                "agent": "codex",
+                "prompt": "hi",
+                "target": {"kind": "local", "cwd": "task"},
+            }
+        ],
+    })
 
     monkeypatch.setenv("HOME", str(home))
 
@@ -56,25 +56,21 @@ def test_load_pipeline_from_path_expands_home_relative_local_cwds(tmp_path, monk
     home = tmp_path / "home"
     home.mkdir()
 
-    pipeline_path = tmp_path / "pipeline.yaml"
-    pipeline_path.write_text(
-        """name: home-local-cwds
-working_dir: .
-local_target_defaults:
-  cwd: ~/shared
-nodes:
-  - id: plan
-    agent: codex
-    prompt: hi
-  - id: review
-    agent: claude
-    prompt: hi
-    target:
-      kind: local
-      cwd: ~/task
-""",
-        encoding="utf-8",
-    )
+    pipeline_path = tmp_path / "pipeline.json"
+    _write_json_pipeline(pipeline_path, {
+        "name": "home-local-cwds",
+        "working_dir": ".",
+        "local_target_defaults": {"cwd": "~/shared"},
+        "nodes": [
+            {"id": "plan", "agent": "codex", "prompt": "hi"},
+            {
+                "id": "review",
+                "agent": "claude",
+                "prompt": "hi",
+                "target": {"kind": "local", "cwd": "~/task"},
+            },
+        ],
+    })
 
     monkeypatch.setenv("HOME", str(home))
 
@@ -88,18 +84,19 @@ nodes:
 def test_load_pipeline_from_text_resolves_relative_paths_from_explicit_base_dir(tmp_path):
     workspace = tmp_path / "workspace"
     pipeline = load_pipeline_from_text(
-        """name: api-yaml
-working_dir: .
-local_target_defaults:
-  cwd: shared
-nodes:
-  - id: plan
-    agent: codex
-    prompt: hi
-    target:
-      kind: local
-      cwd: task
-""",
+        json.dumps({
+            "name": "api-json",
+            "working_dir": ".",
+            "local_target_defaults": {"cwd": "shared"},
+            "nodes": [
+                {
+                    "id": "plan",
+                    "agent": "codex",
+                    "prompt": "hi",
+                    "target": {"kind": "local", "cwd": "task"},
+                }
+            ],
+        }),
         base_dir=workspace,
     )
 
@@ -137,15 +134,18 @@ def test_load_pipeline_from_data_resolves_relative_paths_from_explicit_base_dir(
 def test_load_pipeline_from_text_accepts_local_target_shorthand_without_kind(tmp_path):
     workspace = tmp_path / "workspace"
     pipeline = load_pipeline_from_text(
-        """name: local-target-shorthand
-working_dir: .
-nodes:
-  - id: plan
-    agent: codex
-    prompt: hi
-    target:
-      cwd: task
-""",
+        json.dumps({
+            "name": "local-target-shorthand",
+            "working_dir": ".",
+            "nodes": [
+                {
+                    "id": "plan",
+                    "agent": "codex",
+                    "prompt": "hi",
+                    "target": {"cwd": "task"},
+                }
+            ],
+        }),
         base_dir=workspace,
     )
 
@@ -157,28 +157,21 @@ nodes:
 def test_load_pipeline_from_text_resolves_node_defaults_and_agent_defaults_relative_targets(tmp_path):
     workspace = tmp_path / "workspace"
     pipeline = load_pipeline_from_text(
-        """name: node-default-targets
-working_dir: .
-node_defaults:
-  target:
-    kind: local
-    shell: bash
-agent_defaults:
-  codex:
-    target:
-      kind: local
-      cwd: shared
-nodes:
-  - id: plan
-    agent: codex
-    prompt: hi
-  - id: review
-    agent: codex
-    prompt: hi
-    target:
-      kind: local
-      cwd: task
-""",
+        json.dumps({
+            "name": "node-default-targets",
+            "working_dir": ".",
+            "node_defaults": {"target": {"kind": "local", "shell": "bash"}},
+            "agent_defaults": {"codex": {"target": {"kind": "local", "cwd": "shared"}}},
+            "nodes": [
+                {"id": "plan", "agent": "codex", "prompt": "hi"},
+                {
+                    "id": "review",
+                    "agent": "codex",
+                    "prompt": "hi",
+                    "target": {"kind": "local", "cwd": "task"},
+                },
+            ],
+        }),
         base_dir=workspace,
     )
 
@@ -191,19 +184,19 @@ nodes:
 def test_load_pipeline_from_text_expands_fanout_nodes_before_resolving_relative_cwds(tmp_path):
     workspace = tmp_path / "workspace"
     pipeline = load_pipeline_from_text(
-        """name: fanout-loader
-working_dir: .
-nodes:
-  - id: fuzz
-    fanout:
-      count: 2
-      as: shard
-    agent: codex
-    prompt: shard {{ shard.number }}
-    target:
-      kind: local
-      cwd: agents/agent_{{ shard.suffix }}
-""",
+        json.dumps({
+            "name": "fanout-loader",
+            "working_dir": ".",
+            "nodes": [
+                {
+                    "id": "fuzz",
+                    "fanout": {"count": 2, "as": "shard"},
+                    "agent": "codex",
+                    "prompt": "shard {{ shard.number }}",
+                    "target": {"kind": "local", "cwd": "agents/agent_{{ shard.suffix }}"},
+                }
+            ],
+        }),
         base_dir=workspace,
     )
 
@@ -216,21 +209,22 @@ nodes:
 def test_load_pipeline_from_text_expands_fanout_values_before_resolving_relative_cwds(tmp_path):
     workspace = tmp_path / "workspace"
     pipeline = load_pipeline_from_text(
-        """name: fanout-values-loader
-working_dir: .
-nodes:
-  - id: fuzz
-    fanout:
-      as: shard
-      values:
-        - target: libpng
-        - target: sqlite
-    agent: codex
-    prompt: shard {{ shard.target }}
-    target:
-      kind: local
-      cwd: agents/{{ shard.target }}/{{ shard.suffix }}
-""",
+        json.dumps({
+            "name": "fanout-values-loader",
+            "working_dir": ".",
+            "nodes": [
+                {
+                    "id": "fuzz",
+                    "fanout": {
+                        "as": "shard",
+                        "values": [{"target": "libpng"}, {"target": "sqlite"}],
+                    },
+                    "agent": "codex",
+                    "prompt": "shard {{ shard.target }}",
+                    "target": {"kind": "local", "cwd": "agents/{{ shard.target }}/{{ shard.suffix }}"},
+                }
+            ],
+        }),
         base_dir=workspace,
     )
 
@@ -243,21 +237,23 @@ nodes:
 def test_load_pipeline_from_text_expands_fanout_derived_fields_before_resolving_relative_cwds(tmp_path):
     workspace = tmp_path / "workspace"
     pipeline = load_pipeline_from_text(
-        """name: fanout-derived-loader
-working_dir: .
-nodes:
-  - id: fuzz
-    fanout:
-      count: 2
-      as: shard
-      derive:
-        workspace: agents/agent_{{ shard.suffix }}
-    agent: codex
-    prompt: shard {{ shard.workspace }}
-    target:
-      kind: local
-      cwd: "{{ shard.workspace }}"
-""",
+        json.dumps({
+            "name": "fanout-derived-loader",
+            "working_dir": ".",
+            "nodes": [
+                {
+                    "id": "fuzz",
+                    "fanout": {
+                        "count": 2,
+                        "as": "shard",
+                        "derive": {"workspace": "agents/agent_{{ shard.suffix }}"},
+                    },
+                    "agent": "codex",
+                    "prompt": "shard {{ shard.workspace }}",
+                    "target": {"kind": "local", "cwd": "{{ shard.workspace }}"},
+                }
+            ],
+        }),
         base_dir=workspace,
     )
 
@@ -275,25 +271,25 @@ nodes:
 def test_load_pipeline_from_text_expands_fanout_matrix_before_resolving_relative_cwds(tmp_path):
     workspace = tmp_path / "workspace"
     pipeline = load_pipeline_from_text(
-        """name: fanout-matrix-loader
-working_dir: .
-nodes:
-  - id: fuzz
-    fanout:
-      as: shard
-      matrix:
-        family:
-          - target: libpng
-          - target: sqlite
-        variant:
-          - sanitizer: asan
-          - sanitizer: ubsan
-    agent: codex
-    prompt: shard {{ shard.target }} {{ shard.sanitizer }}
-    target:
-      kind: local
-      cwd: agents/{{ shard.target }}/{{ shard.sanitizer }}/{{ shard.suffix }}
-""",
+        json.dumps({
+            "name": "fanout-matrix-loader",
+            "working_dir": ".",
+            "nodes": [
+                {
+                    "id": "fuzz",
+                    "fanout": {
+                        "as": "shard",
+                        "matrix": {
+                            "family": [{"target": "libpng"}, {"target": "sqlite"}],
+                            "variant": [{"sanitizer": "asan"}, {"sanitizer": "ubsan"}],
+                        },
+                    },
+                    "agent": "codex",
+                    "prompt": "shard {{ shard.target }} {{ shard.sanitizer }}",
+                    "target": {"kind": "local", "cwd": "agents/{{ shard.target }}/{{ shard.sanitizer }}/{{ shard.suffix }}"},
+                }
+            ],
+        }),
         base_dir=workspace,
     )
 
@@ -308,36 +304,38 @@ nodes:
 def test_load_pipeline_from_text_expands_grouped_fanout_before_resolving_relative_cwds(tmp_path):
     workspace = tmp_path / "workspace"
     pipeline = load_pipeline_from_text(
-        """name: fanout-group-by-loader
-working_dir: .
-nodes:
-  - id: fuzz
-    fanout:
-      as: shard
-      matrix:
-        family:
-          - target: libpng
-            corpus: png
-          - target: sqlite
-            corpus: sql
-        variant:
-          - sanitizer: asan
-          - sanitizer: ubsan
-    agent: codex
-    prompt: shard {{ shard.target }} {{ shard.sanitizer }}
-  - id: family_merge
-    fanout:
-      as: family
-      group_by:
-        from: fuzz
-        fields: [target, corpus]
-    agent: codex
-    depends_on: [fuzz]
-    prompt: merge {{ family.target }} {{ family.corpus }}
-    target:
-      kind: local
-      cwd: reducers/{{ family.target }}/{{ family.suffix }}
-""",
+        json.dumps({
+            "name": "fanout-group-by-loader",
+            "working_dir": ".",
+            "nodes": [
+                {
+                    "id": "fuzz",
+                    "fanout": {
+                        "as": "shard",
+                        "matrix": {
+                            "family": [
+                                {"target": "libpng", "corpus": "png"},
+                                {"target": "sqlite", "corpus": "sql"},
+                            ],
+                            "variant": [{"sanitizer": "asan"}, {"sanitizer": "ubsan"}],
+                        },
+                    },
+                    "agent": "codex",
+                    "prompt": "shard {{ shard.target }} {{ shard.sanitizer }}",
+                },
+                {
+                    "id": "family_merge",
+                    "fanout": {
+                        "as": "family",
+                        "group_by": {"from": "fuzz", "fields": ["target", "corpus"]},
+                    },
+                    "agent": "codex",
+                    "depends_on": ["fuzz"],
+                    "prompt": "merge {{ family.target }} {{ family.corpus }}",
+                    "target": {"kind": "local", "cwd": "reducers/{{ family.target }}/{{ family.suffix }}"},
+                },
+            ],
+        }),
         base_dir=workspace,
     )
 
@@ -366,33 +364,34 @@ nodes:
 def test_load_pipeline_from_text_expands_batched_fanout_before_resolving_relative_cwds(tmp_path):
     workspace = tmp_path / "workspace"
     pipeline = load_pipeline_from_text(
-        """name: fanout-batches-loader
-working_dir: .
-nodes:
-  - id: fuzz
-    fanout:
-      count: 5
-      as: shard
-      derive:
-        workspace: agents/agent_{{ shard.suffix }}
-    agent: codex
-    prompt: shard {{ shard.number }} {{ shard.workspace }}
-    target:
-      kind: local
-      cwd: "{{ shard.workspace }}"
-  - id: batch_merge
-    fanout:
-      as: batch
-      batches:
-        from: fuzz
-        size: 2
-    agent: codex
-    depends_on: [fuzz]
-    prompt: batch {{ batch.start_number }}-{{ batch.end_number }} {{ batch.size }}
-    target:
-      kind: local
-      cwd: reducers/{{ batch.suffix }}
-""",
+        json.dumps({
+            "name": "fanout-batches-loader",
+            "working_dir": ".",
+            "nodes": [
+                {
+                    "id": "fuzz",
+                    "fanout": {
+                        "count": 5,
+                        "as": "shard",
+                        "derive": {"workspace": "agents/agent_{{ shard.suffix }}"},
+                    },
+                    "agent": "codex",
+                    "prompt": "shard {{ shard.number }} {{ shard.workspace }}",
+                    "target": {"kind": "local", "cwd": "{{ shard.workspace }}"},
+                },
+                {
+                    "id": "batch_merge",
+                    "fanout": {
+                        "as": "batch",
+                        "batches": {"from": "fuzz", "size": 2},
+                    },
+                    "agent": "codex",
+                    "depends_on": ["fuzz"],
+                    "prompt": "batch {{ batch.start_number }}-{{ batch.end_number }} {{ batch.size }}",
+                    "target": {"kind": "local", "cwd": "reducers/{{ batch.suffix }}"},
+                },
+            ],
+        }),
         base_dir=workspace,
     )
 
@@ -430,23 +429,20 @@ def test_load_pipeline_from_path_expands_fanout_values_path_before_resolving_rel
         "target,seed\nlibpng,1001\nsqlite,2002\n",
         encoding="utf-8",
     )
-    pipeline_path = workspace / "pipeline.yaml"
-    pipeline_path.write_text(
-        """name: fanout-values-path-loader
-working_dir: .
-nodes:
-  - id: fuzz
-    fanout:
-      as: shard
-      values_path: manifests/shards.csv
-    agent: codex
-    prompt: shard {{ shard.target }} {{ shard.seed }}
-    target:
-      kind: local
-      cwd: agents/{{ shard.target }}/{{ shard.suffix }}
-""",
-        encoding="utf-8",
-    )
+    pipeline_path = workspace / "pipeline.json"
+    _write_json_pipeline(pipeline_path, {
+        "name": "fanout-values-path-loader",
+        "working_dir": ".",
+        "nodes": [
+            {
+                "id": "fuzz",
+                "fanout": {"as": "shard", "values_path": "manifests/shards.csv"},
+                "agent": "codex",
+                "prompt": "shard {{ shard.target }} {{ shard.seed }}",
+                "target": {"kind": "local", "cwd": "agents/{{ shard.target }}/{{ shard.suffix }}"},
+            }
+        ],
+    })
 
     pipeline = load_pipeline_from_path(pipeline_path)
 
@@ -462,33 +458,27 @@ def test_load_pipeline_from_path_expands_fanout_matrix_path_before_resolving_rel
     workspace = tmp_path / "workspace"
     manifests = workspace / "manifests"
     manifests.mkdir(parents=True)
-    (manifests / "axes.yaml").write_text(
-        """family:
-  - target: libpng
-  - target: sqlite
-variant:
-  - sanitizer: asan
-  - sanitizer: ubsan
-""",
+    (manifests / "axes.json").write_text(
+        json.dumps({
+            "family": [{"target": "libpng"}, {"target": "sqlite"}],
+            "variant": [{"sanitizer": "asan"}, {"sanitizer": "ubsan"}],
+        }),
         encoding="utf-8",
     )
-    pipeline_path = workspace / "pipeline.yaml"
-    pipeline_path.write_text(
-        """name: fanout-matrix-path-loader
-working_dir: .
-nodes:
-  - id: fuzz
-    fanout:
-      as: shard
-      matrix_path: manifests/axes.yaml
-    agent: codex
-    prompt: shard {{ shard.target }} {{ shard.sanitizer }}
-    target:
-      kind: local
-      cwd: agents/{{ shard.target }}/{{ shard.sanitizer }}/{{ shard.suffix }}
-""",
-        encoding="utf-8",
-    )
+    pipeline_path = workspace / "pipeline.json"
+    _write_json_pipeline(pipeline_path, {
+        "name": "fanout-matrix-path-loader",
+        "working_dir": ".",
+        "nodes": [
+            {
+                "id": "fuzz",
+                "fanout": {"as": "shard", "matrix_path": "manifests/axes.json"},
+                "agent": "codex",
+                "prompt": "shard {{ shard.target }} {{ shard.sanitizer }}",
+                "target": {"kind": "local", "cwd": "agents/{{ shard.target }}/{{ shard.sanitizer }}/{{ shard.suffix }}"},
+            }
+        ],
+    })
 
     pipeline = load_pipeline_from_path(pipeline_path)
 

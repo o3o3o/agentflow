@@ -1,20 +1,68 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+
+from pydantic import BaseModel, Field
 
 from agentflow.agents.registry import AdapterRegistry, default_adapter_registry
 from agentflow.context import render_node_prompt
 from agentflow.prepared import ExecutionPaths, build_execution_paths
 from agentflow.runners.registry import RunnerRegistry, default_runner_registry
-from agentflow.specs import NodeAttempt, NodeResult, NodeStatus, PipelineSpec, RunEvent, RunRecord, RunStatus
+from agentflow.specs import (
+    NodeAttempt,
+    NodeResult,
+    NodeStatus,
+    PeriodicActuationMode,
+    PipelineSpec,
+    RunEvent,
+    RunRecord,
+    RunStatus,
+)
 from agentflow.store import RunStore
 from agentflow.success import evaluate_success
 from agentflow.traces import create_trace_parser
 from agentflow.utils import looks_sensitive_key, redact_sensitive_shell_value, utcnow_iso
+
+
+_TERMINAL_NODE_STATUSES = {
+    NodeStatus.COMPLETED,
+    NodeStatus.FAILED,
+    NodeStatus.SKIPPED,
+    NodeStatus.CANCELLED,
+}
+
+
+class _PeriodicAction(BaseModel):
+    kind: str
+    node_ids: list[str] = Field(default_factory=list)
+    reason: str | None = None
+
+
+class _PeriodicActionEnvelope(BaseModel):
+    analysis: str | None = None
+    actions: list[_PeriodicAction] = Field(default_factory=list)
+
+
+@dataclass(slots=True)
+class _NodeExecutionOutcome:
+    node_id: str
+    periodic_tick_number: int | None = None
+    periodic_actions: _PeriodicActionEnvelope | None = None
+    periodic_action_parse_error: str | None = None
+
+
+@dataclass(slots=True)
+class _PeriodicNodeRuntimeState:
+    tick_count: int = 0
+    next_tick_at: float | None = None
+    last_tick_started_at: str | None = None
+    last_tick_started_mono: float | None = None
 
 
 @dataclass(slots=True)
@@ -26,6 +74,8 @@ class Orchestrator:
     _run_slots: threading.Semaphore = field(init=False, repr=False)
     _cancel_flags: dict[str, threading.Event] = field(default_factory=dict, init=False, repr=False)
     _run_finished: dict[str, threading.Event] = field(default_factory=dict, init=False, repr=False)
+    _node_cancel_flags: dict[str, set[str]] = field(default_factory=dict, init=False, repr=False)
+    _pending_node_reruns: dict[str, set[str]] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._run_slots = threading.Semaphore(self.max_concurrent_runs)
@@ -40,6 +90,8 @@ class Orchestrator:
         )
         self._cancel_flags[run_id] = threading.Event()
         self._run_finished[run_id] = threading.Event()
+        self._node_cancel_flags[run_id] = set()
+        self._pending_node_reruns[run_id] = set()
         await self.store.create_run(run)
         await self._publish(run_id, "run_queued", pipeline=pipeline.model_dump(mode="json"))
 
@@ -98,6 +150,9 @@ class Orchestrator:
         if self._cancel_flags.get(run_id, threading.Event()).is_set():
             return True
         return self.store.cancel_requested(run_id)
+
+    def _should_cancel_node(self, run_id: str, node_id: str) -> bool:
+        return node_id in self._node_cancel_flags.get(run_id, set())
 
     async def _finalize_cancelled_queue_run(self, run_id: str) -> None:
         record = self.store.get_run(run_id)
@@ -167,25 +222,174 @@ class Orchestrator:
             await self.store.append_artifact_text(run_id, node_id, "stderr.log", "Cancelled by user\n")
         await self._publish(run_id, "node_cancelled", node_id=node_id, reason=reason)
 
-    async def _execute_node(self, run_id: str, node_id: str) -> None:
+    def _normalize_periodic_output_text(self, text: str | None) -> str:
+        normalized = str(text or "").strip()
+        if normalized.startswith("```"):
+            lines = normalized.splitlines()
+            if len(lines) >= 3 and lines[-1].strip() == "```":
+                normalized = "\n".join(lines[1:-1]).strip()
+                if normalized.lower().startswith("json\n"):
+                    normalized = normalized[5:].strip()
+        return normalized
+
+    def _parse_periodic_actions(
+        self,
+        text: str | None,
+    ) -> tuple[_PeriodicActionEnvelope | None, str | None]:
+        normalized = self._normalize_periodic_output_text(text)
+        if not normalized:
+            return _PeriodicActionEnvelope(), None
+        try:
+            payload = json.loads(normalized)
+        except json.JSONDecodeError as exc:
+            return None, f"invalid JSON control envelope: {exc}"
+        try:
+            return _PeriodicActionEnvelope.model_validate(payload), None
+        except Exception as exc:  # pragma: no cover - pydantic error details vary
+            return None, f"invalid control envelope: {exc}"
+
+    def _fanout_group_settled(self, pipeline: PipelineSpec, results: dict[str, NodeResult], group_id: str) -> bool:
+        member_ids = pipeline.fanouts.get(group_id, [])
+        if not member_ids:
+            return True
+        return all(results[member_id].status in _TERMINAL_NODE_STATUSES for member_id in member_ids)
+
+    async def _finalize_periodic_node(self, run_id: str, node_id: str, *, reason: str) -> None:
+        record = self.store.get_run(run_id)
+        result = record.nodes[node_id]
+        if result.status == NodeStatus.COMPLETED:
+            return
+        result.status = NodeStatus.COMPLETED
+        result.success = True if result.success is None else result.success
+        result.next_scheduled_at = None
+        result.finished_at = result.finished_at or utcnow_iso()
+        await self._publish(
+            run_id,
+            "node_completed",
+            node_id=node_id,
+            tick_count=result.tick_count,
+            reason=reason,
+            output=result.output,
+            final_response=result.final_response,
+            success=result.success,
+            success_details=result.success_details,
+        )
+        await self.store.write_artifact_text(run_id, node_id, "output.txt", result.output or "")
+        await self.store.write_artifact_json(run_id, node_id, "result.json", result.model_dump(mode="json"))
+        await self.store.persist_run(run_id)
+
+    async def _apply_periodic_actions(
+        self,
+        run_id: str,
+        controller_node_id: str,
+        *,
+        watched_group: str,
+        actions: _PeriodicActionEnvelope,
+        remaining: set[str],
+        in_progress: dict[str, asyncio.Task["_NodeExecutionOutcome"]],
+    ) -> None:
+        if not actions.actions:
+            return
+
+        record = self.store.get_run(run_id)
+        allowed_node_ids = set(record.pipeline.fanouts.get(watched_group, []))
+
+        ordered_actions = sorted(actions.actions, key=lambda item: 0 if item.kind == "cancel" else 1)
+        applied: list[dict[str, Any]] = []
+        rejected: list[dict[str, Any]] = []
+
+        for action in ordered_actions:
+            kind = action.kind.strip().lower()
+            if kind not in {"cancel", "rerun"}:
+                rejected.append({"kind": action.kind, "node_ids": list(action.node_ids), "reason": "unsupported_action"})
+                continue
+            for target_node_id in action.node_ids:
+                if target_node_id not in allowed_node_ids:
+                    rejected.append({"kind": kind, "node_id": target_node_id, "reason": "outside_watched_fanout"})
+                    continue
+                target_result = record.nodes[target_node_id]
+                if kind == "cancel":
+                    if target_result.status not in {NodeStatus.QUEUED, NodeStatus.RUNNING, NodeStatus.RETRYING}:
+                        rejected.append({"kind": kind, "node_id": target_node_id, "reason": "node_not_running"})
+                        continue
+                    self._node_cancel_flags.setdefault(run_id, set()).add(target_node_id)
+                    applied.append({"kind": kind, "node_id": target_node_id, "reason": action.reason})
+                    continue
+
+                if target_result.status in {NodeStatus.PENDING, NodeStatus.READY}:
+                    rejected.append({"kind": kind, "node_id": target_node_id, "reason": "node_not_started"})
+                    continue
+                self._pending_node_reruns.setdefault(run_id, set()).add(target_node_id)
+                if target_result.status in _TERMINAL_NODE_STATUSES and target_node_id not in in_progress:
+                    target_result.status = NodeStatus.PENDING
+                    target_result.next_scheduled_at = None
+                    remaining.add(target_node_id)
+                applied.append({"kind": kind, "node_id": target_node_id, "reason": action.reason})
+
+        if applied:
+            await self._publish(
+                run_id,
+                "node_control_actions_applied",
+                node_id=controller_node_id,
+                watched_group=watched_group,
+                actions=applied,
+            )
+        if rejected:
+            await self._publish(
+                run_id,
+                "node_control_actions_rejected",
+                node_id=controller_node_id,
+                watched_group=watched_group,
+                actions=rejected,
+            )
+
+    async def _execute_node(
+        self,
+        run_id: str,
+        node_id: str,
+        *,
+        periodic_tick_number: int | None = None,
+        periodic_tick_started_at: str | None = None,
+    ) -> _NodeExecutionOutcome:
         record = self.store.get_run(run_id)
         pipeline = record.pipeline
         node = pipeline.node_map[node_id]
         result = record.nodes[node_id]
-        result.started_at = result.started_at or utcnow_iso()
+        result.started_at = result.started_at or (periodic_tick_started_at or utcnow_iso())
+        if periodic_tick_number is not None:
+            result.tick_count = max(result.tick_count, periodic_tick_number)
+            result.last_tick_started_at = periodic_tick_started_at
         result.status = NodeStatus.RUNNING
         await self._publish(run_id, "node_started", node_id=node_id)
+        if periodic_tick_number is not None:
+            await self._publish(
+                run_id,
+                "node_tick_started",
+                node_id=node_id,
+                tick_number=periodic_tick_number,
+                tick_started_at=periodic_tick_started_at,
+            )
 
-        prompt = render_node_prompt(pipeline, node, record.nodes)
+        prompt = render_node_prompt(
+            pipeline,
+            node,
+            record.nodes,
+            run_id=run_id,
+            artifacts_base_dir=self.store.base_dir,
+            current_tick_number=periodic_tick_number,
+            current_tick_started_at=periodic_tick_started_at,
+        )
         paths = self._build_paths(pipeline, run_id, node_id, node.target)
         adapter = self.adapters.get(node.agent)
         runner = self.runners.get(node.target.kind)
         parser = create_trace_parser(node.agent, node.id)
+        periodic_actions: _PeriodicActionEnvelope | None = None
+        periodic_action_parse_error: str | None = None
 
         for attempt_number in range(1, node.retries + 2):
             if self._should_cancel(run_id):
                 await self._mark_node_cancelled(run_id, node_id, "run_cancelled")
-                return
+                return _NodeExecutionOutcome(node_id=node_id, periodic_tick_number=periodic_tick_number)
 
             attempt = NodeAttempt(number=attempt_number, status=NodeStatus.RUNNING, started_at=utcnow_iso())
             attempt_stdout_lines: list[str] = []
@@ -235,7 +439,13 @@ class Orchestrator:
                     result.trace_events.append(event)
                     await self._publish_trace(run_id, node_id, event)
 
-            raw = await runner.execute(node, prepared, paths, on_output, lambda: self._should_cancel(run_id))
+            raw = await runner.execute(
+                node,
+                prepared,
+                paths,
+                on_output,
+                lambda: self._should_cancel(run_id) or self._should_cancel_node(run_id, node_id),
+            )
             result.exit_code = raw.exit_code
             result.stdout_lines = attempt_stdout_lines
             result.stderr_lines = attempt_stderr_lines
@@ -268,19 +478,38 @@ class Orchestrator:
 
             if raw.exit_code == 0 and success_ok:
                 attempt.status = NodeStatus.COMPLETED
-                result.status = NodeStatus.COMPLETED
+                result.status = NodeStatus.READY if periodic_tick_number is not None else NodeStatus.COMPLETED
                 result.finished_at = attempt.finished_at
-                await self._publish(
-                    run_id,
-                    "node_completed",
-                    node_id=node_id,
-                    attempt=attempt_number,
-                    exit_code=result.exit_code,
-                    success=result.success,
-                    output=result.output,
-                    final_response=result.final_response,
-                    success_details=result.success_details,
-                )
+                if periodic_tick_number is not None:
+                    if node.schedule and node.schedule.actuation == PeriodicActuationMode.OUTPUT_JSON:
+                        periodic_actions, periodic_action_parse_error = self._parse_periodic_actions(result.final_response)
+                        if periodic_actions is not None and periodic_actions.analysis is not None:
+                            result.output = periodic_actions.analysis
+                            attempt.output = result.output
+                    await self._publish(
+                        run_id,
+                        "node_tick_completed",
+                        node_id=node_id,
+                        tick_number=periodic_tick_number,
+                        attempt=attempt_number,
+                        exit_code=result.exit_code,
+                        success=result.success,
+                        output=result.output,
+                        final_response=result.final_response,
+                        success_details=result.success_details,
+                    )
+                else:
+                    await self._publish(
+                        run_id,
+                        "node_completed",
+                        node_id=node_id,
+                        attempt=attempt_number,
+                        exit_code=result.exit_code,
+                        success=result.success,
+                        output=result.output,
+                        final_response=result.final_response,
+                        success_details=result.success_details,
+                    )
                 break
 
             attempt.status = NodeStatus.FAILED
@@ -305,6 +534,14 @@ class Orchestrator:
         await self.store.write_artifact_text(run_id, node_id, "output.txt", result.output or "")
         await self.store.write_artifact_json(run_id, node_id, "result.json", result.model_dump(mode="json"))
         await self.store.persist_run(run_id)
+        if periodic_tick_number is not None:
+            return _NodeExecutionOutcome(
+                node_id=node_id,
+                periodic_tick_number=periodic_tick_number,
+                periodic_actions=periodic_actions,
+                periodic_action_parse_error=periodic_action_parse_error,
+            )
+        return _NodeExecutionOutcome(node_id=node_id)
 
     async def run(self, run_id: str) -> RunRecord:
         record = self.store.get_run(run_id)
@@ -316,12 +553,34 @@ class Orchestrator:
 
         node_map = pipeline.node_map
         remaining = set(node_map)
-        in_progress: dict[str, asyncio.Task[None]] = {}
+        in_progress: dict[str, asyncio.Task[_NodeExecutionOutcome]] = {}
         semaphore = asyncio.Semaphore(pipeline.concurrency)
+        loop = asyncio.get_running_loop()
+        periodic_state = {
+            node_id: _PeriodicNodeRuntimeState()
+            for node_id, node in node_map.items()
+            if node.schedule is not None
+        }
 
-        async def launch(node_id: str) -> None:
+        async def launch(node_id: str) -> _NodeExecutionOutcome:
             async with semaphore:
-                await self._execute_node(run_id, node_id)
+                node = node_map[node_id]
+                if node.schedule is None:
+                    return await self._execute_node(run_id, node_id)
+                state = periodic_state[node_id]
+                state.tick_count += 1
+                tick_started_at = utcnow_iso()
+                state.last_tick_started_at = tick_started_at
+                state.last_tick_started_mono = loop.time()
+                record.nodes[node_id].tick_count = state.tick_count
+                record.nodes[node_id].last_tick_started_at = tick_started_at
+                record.nodes[node_id].next_scheduled_at = None
+                return await self._execute_node(
+                    run_id,
+                    node_id,
+                    periodic_tick_number=state.tick_count,
+                    periodic_tick_started_at=tick_started_at,
+                )
 
         while remaining or in_progress:
             if self._should_cancel(run_id):
@@ -339,11 +598,6 @@ class Orchestrator:
                     remaining.remove(node_id)
                     await self._publish(run_id, "node_skipped", node_id=node_id, reason="fail_fast")
 
-            ready = [
-                node_id
-                for node_id in list(remaining)
-                if all(record.nodes[dependency].status == NodeStatus.COMPLETED for dependency in node_map[node_id].depends_on)
-            ]
             blocked = [
                 node_id
                 for node_id in list(remaining)
@@ -354,6 +608,35 @@ class Orchestrator:
                 record.nodes[node_id].finished_at = utcnow_iso()
                 remaining.remove(node_id)
                 await self._publish(run_id, "node_skipped", node_id=node_id, reason="upstream_failure")
+            for node_id in list(remaining):
+                node = node_map[node_id]
+                if node.schedule is None:
+                    continue
+                if any(record.nodes[dependency].status != NodeStatus.COMPLETED for dependency in node.depends_on):
+                    continue
+                if not self._fanout_group_settled(
+                    pipeline,
+                    record.nodes,
+                    node.schedule.until_fanout_settles_from,
+                ):
+                    continue
+                remaining.remove(node_id)
+                await self._finalize_periodic_node(run_id, node_id, reason="watched_group_settled")
+
+            now = loop.time()
+            ready: list[str] = []
+            for node_id in list(remaining):
+                if node_id in in_progress:
+                    continue
+                node = node_map[node_id]
+                if not all(record.nodes[dependency].status == NodeStatus.COMPLETED for dependency in node.depends_on):
+                    continue
+                if node.schedule is None:
+                    ready.append(node_id)
+                    continue
+                state = periodic_state[node_id]
+                if state.next_tick_at is None or now >= state.next_tick_at:
+                    ready.append(node_id)
             for node_id in ready:
                 if node_id not in in_progress:
                     remaining.remove(node_id)
@@ -364,7 +647,82 @@ class Orchestrator:
                 finished_ids = [node_id for node_id, task in in_progress.items() if task in done]
                 for node_id in finished_ids:
                     task = in_progress.pop(node_id)
-                    await task
+                    outcome = await task
+                    node = node_map[node_id]
+                    self._node_cancel_flags.setdefault(run_id, set()).discard(node_id)
+
+                    if node.schedule is not None:
+                        if outcome.periodic_actions is not None:
+                            await self.store.write_artifact_json(
+                                run_id,
+                                node_id,
+                                f"periodic-actions-tick-{outcome.periodic_tick_number}.json",
+                                outcome.periodic_actions.model_dump(mode="json"),
+                            )
+                        elif outcome.periodic_action_parse_error is not None:
+                            await self.store.write_artifact_json(
+                                run_id,
+                                node_id,
+                                f"periodic-actions-tick-{outcome.periodic_tick_number}.json",
+                                {"error": outcome.periodic_action_parse_error},
+                            )
+                            await self._publish(
+                                run_id,
+                                "node_control_actions_rejected",
+                                node_id=node_id,
+                                watched_group=node.schedule.until_fanout_settles_from,
+                                actions=[{"reason": outcome.periodic_action_parse_error}],
+                            )
+
+                        if outcome.periodic_actions is not None:
+                            await self._apply_periodic_actions(
+                                run_id,
+                                node_id,
+                                watched_group=node.schedule.until_fanout_settles_from,
+                                actions=outcome.periodic_actions,
+                                remaining=remaining,
+                                in_progress=in_progress,
+                            )
+
+                        node_result = record.nodes[node_id]
+                        if node_result.status == NodeStatus.READY and not self._should_cancel(run_id):
+                            if self._fanout_group_settled(
+                                pipeline,
+                                record.nodes,
+                                node.schedule.until_fanout_settles_from,
+                            ):
+                                await self._finalize_periodic_node(run_id, node_id, reason="watched_group_settled")
+                            else:
+                                state = periodic_state[node_id]
+                                if state.last_tick_started_mono is None:
+                                    state.next_tick_at = loop.time() + node.schedule.every_seconds
+                                else:
+                                    state.next_tick_at = state.last_tick_started_mono + node.schedule.every_seconds
+                                seconds_until_next_tick = max(state.next_tick_at - loop.time(), 0.0)
+                                next_tick_at = datetime.now(timezone.utc) + timedelta(seconds=seconds_until_next_tick)
+                                node_result.next_scheduled_at = next_tick_at.isoformat()
+                                remaining.add(node_id)
+                                await self._publish(
+                                    run_id,
+                                    "node_waiting",
+                                    node_id=node_id,
+                                    tick_count=node_result.tick_count,
+                                    next_scheduled_at=node_result.next_scheduled_at,
+                                )
+                                await self.store.persist_run(run_id)
+
+                    if (
+                        node_id in self._pending_node_reruns.setdefault(run_id, set())
+                        and record.nodes[node_id].status in _TERMINAL_NODE_STATUSES
+                        and not self._should_cancel(run_id)
+                    ):
+                        self._pending_node_reruns[run_id].discard(node_id)
+                        record.nodes[node_id].status = NodeStatus.PENDING
+                        record.nodes[node_id].finished_at = None
+                        record.nodes[node_id].next_scheduled_at = None
+                        remaining.add(node_id)
+                        await self._publish(run_id, "node_rerun_queued", node_id=node_id)
+                        await self.store.persist_run(run_id)
             elif remaining:
                 await asyncio.sleep(0.05)
             else:
@@ -380,4 +738,6 @@ class Orchestrator:
         await self._publish(run_id, "run_completed", status=record.status.value)
         await self.store.clear_cancel_request(run_id)
         await self.store.persist_run(run_id)
+        self._node_cancel_flags.pop(run_id, None)
+        self._pending_node_reruns.pop(run_id, None)
         return record

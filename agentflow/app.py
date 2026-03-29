@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Str
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from agentflow.defaults import load_default_pipeline_yaml
+from agentflow.defaults import load_default_pipeline
 from agentflow.loader import load_pipeline_from_data, load_pipeline_from_path, load_pipeline_from_text
 from agentflow.orchestrator import Orchestrator
 from agentflow.specs import PipelineSpec
@@ -26,8 +26,8 @@ def _parse_pipeline_payload(payload: dict[str, Any]) -> PipelineSpec:
             return load_pipeline_from_path(pipeline_path)
 
         base_dir = payload.get("base_dir")
-        if "yaml" in payload:
-            return load_pipeline_from_text(payload["yaml"], base_dir=base_dir)
+        if "pipeline_text" in payload:
+            return load_pipeline_from_text(payload["pipeline_text"], base_dir=base_dir)
 
         pipeline_data = payload["pipeline"] if "pipeline" in payload else dict(payload)
         if isinstance(pipeline_data, dict):
@@ -57,12 +57,12 @@ def create_app(*, store: RunStore | None = None, orchestrator: Orchestrator | No
     async def index(request: Request) -> HTMLResponse:
         return templates.TemplateResponse(
             "index.html",
-            {"request": request, "example": load_default_pipeline_yaml(), "base_dir": os.getcwd()},
+            {"request": request, "example": load_default_pipeline(), "base_dir": os.getcwd()},
         )
 
     @app.get("/api/examples/default")
     async def default_example() -> JSONResponse:
-        return JSONResponse({"yaml": load_default_pipeline_yaml(), "base_dir": os.getcwd()})
+        return JSONResponse({"example": load_default_pipeline(), "base_dir": os.getcwd()})
 
     @app.post("/api/runs/validate")
     async def validate_run(request: Request) -> JSONResponse:

@@ -6,7 +6,7 @@ repo_root="$(cd "$script_dir/.." && pwd)"
 . "$script_dir/custom-local-kimi-helpers.sh"
 
 python_bin="$(agentflow_repo_python "$repo_root")"
-bundled_smoke_pipeline="${AGENTFLOW_BUNDLED_PIPELINE_PATH:-$repo_root/examples/local-real-agents-kimi-smoke.yaml}"
+bundled_smoke_pipeline="${AGENTFLOW_BUNDLED_PIPELINE_PATH:-$repo_root/examples/local-real-agents-kimi-smoke.py}"
 expected_pipeline_name="${AGENTFLOW_BUNDLED_PIPELINE_NAME:-local-real-agents-kimi-smoke}"
 expected_trigger="${AGENTFLOW_BUNDLED_EXPECTED_TRIGGER:-target.bootstrap}"
 expected_auto_preflight_reason="${AGENTFLOW_BUNDLED_EXPECTED_AUTO_PREFLIGHT_REASON:-path matches the bundled real-agent smoke pipeline.}"

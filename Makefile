@@ -12,7 +12,7 @@ help:
 	  '  toolchain-local Run `agentflow toolchain-local --output summary` for the local bash/Kimi/Codex/Claude readiness check' \
 	  '  probe-codex-local Run a minimal live Codex request through the local bash + kimi bootstrap and preserve CLI/provider-side errors' \
 	  '  probe-claude-local Run a minimal live Claude-on-Kimi request through the local bash + kimi bootstrap and preserve provider-side errors' \
-	  '  verify-local  Run the full local Codex + Claude-on-Kimi verification stack across bundled bootstrap/shell_init/target.shell inspect/doctor/smoke/run/check-local coverage, bundled toolchain-local, the live Codex and Claude probes, plus external custom doctor, inspect, smoke, check-local, and run paths (shared timeout via AGENTFLOW_LOCAL_VERIFY_TIMEOUT_SECONDS)' \
+	  '  verify-local  Run the full local Codex + Claude-on-Kimi verification stack across bundled bootstrap/shell_init/target.shell inspect/doctor/smoke/run/check-local coverage, bundled toolchain-local, the live Codex and Claude probes, plus external custom doctor, inspect, smoke, check-local, and run paths (set AGENTFLOW_LOCAL_VERIFY_KEEP_GOING=1 to continue after failures; shared timeout via AGENTFLOW_LOCAL_VERIFY_TIMEOUT_SECONDS)' \
 	  '  doctor-local-custom Verify a temporary external Codex + Claude-on-Kimi pipeline through `agentflow doctor`' \
 	  '  doctor-local-custom-shell-init Verify a temporary external Codex + Claude-on-Kimi `shell_init: kimi` pipeline through `agentflow doctor`' \
 	  '  doctor-local-custom-shell-wrapper Verify a temporary external Codex + Claude-on-Kimi `target.shell` wrapper pipeline through `agentflow doctor`' \
@@ -108,46 +108,46 @@ run-local-custom-shell-wrapper:
 	AGENTFLOW_KIMI_PIPELINE_MODE=shell-wrapper bash scripts/verify-custom-local-kimi-run.sh
 
 inspect-local:
-	$(PYTHON) -m agentflow inspect examples/local-real-agents-kimi-smoke.yaml --output summary
+	$(PYTHON) -m agentflow inspect examples/local-real-agents-kimi-smoke.py --output summary
 
 inspect-local-shell-init:
-	$(PYTHON) -m agentflow inspect examples/local-real-agents-kimi-shell-init-smoke.yaml --output summary
+	$(PYTHON) -m agentflow inspect examples/local-real-agents-kimi-shell-init-smoke.py --output summary
 
 inspect-local-shell-wrapper:
-	$(PYTHON) -m agentflow inspect examples/local-real-agents-kimi-shell-wrapper-smoke.yaml --output summary
+	$(PYTHON) -m agentflow inspect examples/local-real-agents-kimi-shell-wrapper-smoke.py --output summary
 
 doctor-local:
-	$(PYTHON) -m agentflow doctor examples/local-real-agents-kimi-smoke.yaml --output summary
+	$(PYTHON) -m agentflow doctor examples/local-real-agents-kimi-smoke.py --output summary
 
 doctor-local-shell-init:
-	$(PYTHON) -m agentflow doctor examples/local-real-agents-kimi-shell-init-smoke.yaml --output summary
+	$(PYTHON) -m agentflow doctor examples/local-real-agents-kimi-shell-init-smoke.py --output summary
 
 doctor-local-shell-wrapper:
-	$(PYTHON) -m agentflow doctor examples/local-real-agents-kimi-shell-wrapper-smoke.yaml --output summary
+	$(PYTHON) -m agentflow doctor examples/local-real-agents-kimi-shell-wrapper-smoke.py --output summary
 
 smoke-local:
 	$(PYTHON) -m agentflow smoke --output summary --show-preflight
 
 smoke-local-shell-init:
-	$(PYTHON) -m agentflow smoke examples/local-real-agents-kimi-shell-init-smoke.yaml --output summary --show-preflight
+	$(PYTHON) -m agentflow smoke examples/local-real-agents-kimi-shell-init-smoke.py --output summary --show-preflight
 
 smoke-local-shell-wrapper:
-	$(PYTHON) -m agentflow smoke examples/local-real-agents-kimi-shell-wrapper-smoke.yaml --output summary --show-preflight
+	$(PYTHON) -m agentflow smoke examples/local-real-agents-kimi-shell-wrapper-smoke.py --output summary --show-preflight
 
 run-local:
-	$(PYTHON) -m agentflow run examples/local-real-agents-kimi-smoke.yaml --output summary
+	$(PYTHON) -m agentflow run examples/local-real-agents-kimi-smoke.py --output summary
 
 run-local-shell-init:
-	$(PYTHON) -m agentflow run examples/local-real-agents-kimi-shell-init-smoke.yaml --output summary
+	$(PYTHON) -m agentflow run examples/local-real-agents-kimi-shell-init-smoke.py --output summary
 
 run-local-shell-wrapper:
-	$(PYTHON) -m agentflow run examples/local-real-agents-kimi-shell-wrapper-smoke.yaml --output summary
+	$(PYTHON) -m agentflow run examples/local-real-agents-kimi-shell-wrapper-smoke.py --output summary
 
 check-local:
 	$(PYTHON) -m agentflow check-local --output summary
 
 check-local-shell-init:
-	$(PYTHON) -m agentflow check-local examples/local-real-agents-kimi-shell-init-smoke.yaml --output summary
+	$(PYTHON) -m agentflow check-local examples/local-real-agents-kimi-shell-init-smoke.py --output summary
 
 check-local-shell-wrapper:
-	$(PYTHON) -m agentflow check-local examples/local-real-agents-kimi-shell-wrapper-smoke.yaml --output summary
+	$(PYTHON) -m agentflow check-local examples/local-real-agents-kimi-shell-wrapper-smoke.py --output summary

@@ -636,34 +636,34 @@ def test_make_bundled_kimi_variant_shortcuts_point_to_shipped_examples() -> None
     assert completed.returncode == 0
     assert f"{recipe_python} -m agentflow smoke --output summary --show-preflight" in completed.stdout
     assert (
-        f"{recipe_python} -m agentflow inspect examples/local-real-agents-kimi-shell-init-smoke.yaml --output summary"
+        f"{recipe_python} -m agentflow inspect examples/local-real-agents-kimi-shell-init-smoke.py --output summary"
     ) in completed.stdout
     assert (
-        f"{recipe_python} -m agentflow doctor examples/local-real-agents-kimi-shell-init-smoke.yaml --output summary"
+        f"{recipe_python} -m agentflow doctor examples/local-real-agents-kimi-shell-init-smoke.py --output summary"
     ) in completed.stdout
     assert (
-        f"{recipe_python} -m agentflow smoke examples/local-real-agents-kimi-shell-init-smoke.yaml --output summary --show-preflight"
+        f"{recipe_python} -m agentflow smoke examples/local-real-agents-kimi-shell-init-smoke.py --output summary --show-preflight"
     ) in completed.stdout
     assert (
-        f"{recipe_python} -m agentflow run examples/local-real-agents-kimi-shell-init-smoke.yaml --output summary"
+        f"{recipe_python} -m agentflow run examples/local-real-agents-kimi-shell-init-smoke.py --output summary"
     ) in completed.stdout
     assert (
-        f"{recipe_python} -m agentflow check-local examples/local-real-agents-kimi-shell-init-smoke.yaml --output summary"
+        f"{recipe_python} -m agentflow check-local examples/local-real-agents-kimi-shell-init-smoke.py --output summary"
     ) in completed.stdout
     assert (
-        f"{recipe_python} -m agentflow inspect examples/local-real-agents-kimi-shell-wrapper-smoke.yaml --output summary"
+        f"{recipe_python} -m agentflow inspect examples/local-real-agents-kimi-shell-wrapper-smoke.py --output summary"
     ) in completed.stdout
     assert (
-        f"{recipe_python} -m agentflow doctor examples/local-real-agents-kimi-shell-wrapper-smoke.yaml --output summary"
+        f"{recipe_python} -m agentflow doctor examples/local-real-agents-kimi-shell-wrapper-smoke.py --output summary"
     ) in completed.stdout
     assert (
-        f"{recipe_python} -m agentflow smoke examples/local-real-agents-kimi-shell-wrapper-smoke.yaml --output summary --show-preflight"
+        f"{recipe_python} -m agentflow smoke examples/local-real-agents-kimi-shell-wrapper-smoke.py --output summary --show-preflight"
     ) in completed.stdout
     assert (
-        f"{recipe_python} -m agentflow run examples/local-real-agents-kimi-shell-wrapper-smoke.yaml --output summary"
+        f"{recipe_python} -m agentflow run examples/local-real-agents-kimi-shell-wrapper-smoke.py --output summary"
     ) in completed.stdout
     assert (
-        f"{recipe_python} -m agentflow check-local examples/local-real-agents-kimi-shell-wrapper-smoke.yaml --output summary"
+        f"{recipe_python} -m agentflow check-local examples/local-real-agents-kimi-shell-wrapper-smoke.py --output summary"
     ) in completed.stdout
     assert completed.stderr == ""
 
@@ -1047,7 +1047,7 @@ def test_verify_bundled_local_kimi_run_script_times_out_when_agentflow_hangs(tmp
     )
     elapsed = time.monotonic() - started_at
 
-    bundled_smoke_pipeline = tmp_path / "examples" / "local-real-agents-kimi-smoke.yaml"
+    bundled_smoke_pipeline = tmp_path / "examples" / "local-real-agents-kimi-smoke.py"
 
     assert completed.returncode == 124
     assert f"bundled run pipeline path: {bundled_smoke_pipeline}" in completed.stdout
@@ -1103,7 +1103,7 @@ def test_verify_bundled_local_kimi_smoke_script_times_out_when_agentflow_hangs(t
     )
     elapsed = time.monotonic() - started_at
 
-    bundled_smoke_pipeline = tmp_path / "examples" / "local-real-agents-kimi-smoke.yaml"
+    bundled_smoke_pipeline = tmp_path / "examples" / "local-real-agents-kimi-smoke.py"
 
     assert completed.returncode == 124
     assert f"bundled smoke pipeline path: {bundled_smoke_pipeline}" in completed.stdout
@@ -1167,7 +1167,7 @@ def test_verify_bundled_local_kimi_smoke_script_accepts_shell_wrapper_bundle_ove
         """,
     )
 
-    bundled_wrapper_pipeline = tmp_path / "examples" / "local-real-agents-kimi-shell-wrapper-smoke.yaml"
+    bundled_wrapper_pipeline = tmp_path / "examples" / "local-real-agents-kimi-shell-wrapper-smoke.py"
 
     completed = subprocess.run(
         ["bash", str(smoke_path)],
@@ -1246,7 +1246,7 @@ def test_verify_bundled_local_kimi_run_script_accepts_shell_wrapper_bundle_overr
         """,
     )
 
-    bundled_wrapper_pipeline = tmp_path / "examples" / "local-real-agents-kimi-shell-wrapper-smoke.yaml"
+    bundled_wrapper_pipeline = tmp_path / "examples" / "local-real-agents-kimi-shell-wrapper-smoke.py"
 
     completed = subprocess.run(
         ["bash", str(run_path)],
@@ -1439,9 +1439,9 @@ def test_custom_local_kimi_pipeline_writers_match_bundled_examples(tmp_path: Pat
     repo_root = Path(__file__).resolve().parents[1]
     helpers_path = repo_root / "scripts" / "custom-local-kimi-helpers.sh"
     bundled_examples = {
-        "bootstrap": repo_root / "examples" / "local-real-agents-kimi-smoke.yaml",
-        "shell-init": repo_root / "examples" / "local-real-agents-kimi-shell-init-smoke.yaml",
-        "shell-wrapper": repo_root / "examples" / "local-real-agents-kimi-shell-wrapper-smoke.yaml",
+        "bootstrap": repo_root / "examples" / "local-real-agents-kimi-smoke.py",
+        "shell-init": repo_root / "examples" / "local-real-agents-kimi-shell-init-smoke.py",
+        "shell-wrapper": repo_root / "examples" / "local-real-agents-kimi-shell-wrapper-smoke.py",
     }
     writers = {
         "bootstrap": "write_custom_local_kimi_pipeline",
@@ -1527,7 +1527,7 @@ def test_verify_local_kimi_stack_script_runs_steps_in_expected_order(tmp_path: P
         timeout=5,
     )
 
-    bundled_smoke_pipeline = tmp_path / "examples" / "local-real-agents-kimi-smoke.yaml"
+    bundled_smoke_pipeline = tmp_path / "examples" / "local-real-agents-kimi-smoke.py"
 
     assert completed.returncode == 0
     assert completed.stderr == ""
@@ -1541,16 +1541,16 @@ def test_verify_local_kimi_stack_script_runs_steps_in_expected_order(tmp_path: P
         "verify-bundled-local-kimi-smoke.sh mode=",
         "verify-bundled-local-kimi-run.sh mode=",
         f"agentflow:check-local {bundled_smoke_pipeline} --output summary",
-        f"agentflow:inspect {tmp_path / 'examples' / 'local-real-agents-kimi-shell-init-smoke.yaml'} --output summary",
-        f"agentflow:doctor {tmp_path / 'examples' / 'local-real-agents-kimi-shell-init-smoke.yaml'} --output summary",
+        f"agentflow:inspect {tmp_path / 'examples' / 'local-real-agents-kimi-shell-init-smoke.py'} --output summary",
+        f"agentflow:doctor {tmp_path / 'examples' / 'local-real-agents-kimi-shell-init-smoke.py'} --output summary",
         "verify-bundled-local-kimi-smoke.sh mode=",
         "verify-bundled-local-kimi-run.sh mode=",
-        f"agentflow:check-local {tmp_path / 'examples' / 'local-real-agents-kimi-shell-init-smoke.yaml'} --output summary",
-        f"agentflow:inspect {tmp_path / 'examples' / 'local-real-agents-kimi-shell-wrapper-smoke.yaml'} --output summary",
-        f"agentflow:doctor {tmp_path / 'examples' / 'local-real-agents-kimi-shell-wrapper-smoke.yaml'} --output summary",
+        f"agentflow:check-local {tmp_path / 'examples' / 'local-real-agents-kimi-shell-init-smoke.py'} --output summary",
+        f"agentflow:inspect {tmp_path / 'examples' / 'local-real-agents-kimi-shell-wrapper-smoke.py'} --output summary",
+        f"agentflow:doctor {tmp_path / 'examples' / 'local-real-agents-kimi-shell-wrapper-smoke.py'} --output summary",
         "verify-bundled-local-kimi-smoke.sh mode=",
         "verify-bundled-local-kimi-run.sh mode=",
-        f"agentflow:check-local {tmp_path / 'examples' / 'local-real-agents-kimi-shell-wrapper-smoke.yaml'} --output summary",
+        f"agentflow:check-local {tmp_path / 'examples' / 'local-real-agents-kimi-shell-wrapper-smoke.py'} --output summary",
         "verify-custom-local-kimi-doctor.sh mode=",
         "verify-custom-local-kimi-doctor.sh mode=shell-init",
         "verify-custom-local-kimi-doctor.sh mode=shell-wrapper",

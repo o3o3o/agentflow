@@ -44,7 +44,7 @@ def test_api_returns_default_example_payload(tmp_path):
 
     response = client.get("/api/examples/default")
     assert response.status_code == 200
-    assert "parallel-code-orchestration" in response.json()["yaml"]
+    assert "from agentflow import" in response.json()["example"]
     assert response.json()["base_dir"] == os.getcwd()
 
 
@@ -55,14 +55,14 @@ def test_api_supports_validation_and_artifacts(tmp_path):
 
     validate = client.post(
         "/api/runs/validate",
-        json={"yaml": "name: ok\nworking_dir: .\nnodes:\n  - id: alpha\n    agent: codex\n    prompt: hi\n"},
+        json={"pipeline_text": json.dumps({"name": "ok", "working_dir": ".", "nodes": [{"id": "alpha", "agent": "codex", "prompt": "hi"}]})},
     )
     assert validate.status_code == 200
     assert validate.json()["pipeline"]["name"] == "ok"
 
     invalid = client.post(
         "/api/runs/validate",
-        json={"yaml": "name: bad\nnodes:\n  - id: a\n    agent: codex\n    prompt: hi\n    depends_on: [b]\n"},
+        json={"pipeline_text": json.dumps({"name": "bad", "nodes": [{"id": "a", "agent": "codex", "prompt": "hi", "depends_on": ["b"]}]})},
     )
     assert invalid.status_code == 422
 
@@ -81,7 +81,7 @@ def test_api_supports_validation_and_artifacts(tmp_path):
     assert launch.json()["command"][0] == "python3"
 
 
-def test_api_validate_resolves_inline_yaml_relative_to_explicit_base_dir(tmp_path):
+def test_api_validate_resolves_inline_pipeline_text_relative_to_explicit_base_dir(tmp_path):
     orchestrator = make_orchestrator(tmp_path)
     app = create_app(store=orchestrator.store, orchestrator=orchestrator)
     client = TestClient(app)
@@ -90,17 +90,11 @@ def test_api_validate_resolves_inline_yaml_relative_to_explicit_base_dir(tmp_pat
     response = client.post(
         "/api/runs/validate",
         json={
-            "yaml": (
-                "name: inline-yaml\n"
-                "working_dir: .\n"
-                "nodes:\n"
-                "  - id: alpha\n"
-                "    agent: codex\n"
-                "    prompt: hi\n"
-                "    target:\n"
-                "      kind: local\n"
-                "      cwd: task\n"
-            ),
+            "pipeline_text": json.dumps({
+                "name": "inline-json",
+                "working_dir": ".",
+                "nodes": [{"id": "alpha", "agent": "codex", "prompt": "hi", "target": {"kind": "local", "cwd": "task"}}],
+            }),
             "base_dir": str(workspace),
         },
     )
@@ -155,18 +149,9 @@ def test_api_validate_supports_pipeline_path_payload(tmp_path):
 
     pipeline_dir = tmp_path / "pipelines"
     pipeline_dir.mkdir()
-    pipeline_path = pipeline_dir / "api.yaml"
+    pipeline_path = pipeline_dir / "api.json"
     pipeline_path.write_text(
-        """name: pipeline-path
-working_dir: .
-nodes:
-  - id: alpha
-    agent: codex
-    prompt: hi
-    target:
-      kind: local
-      cwd: task
-""",
+        json.dumps({"name": "pipeline-path", "working_dir": ".", "nodes": [{"id": "alpha", "agent": "codex", "prompt": "hi", "target": {"kind": "local", "cwd": "task"}}]}),
         encoding="utf-8",
     )
 

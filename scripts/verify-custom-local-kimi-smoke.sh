@@ -11,7 +11,7 @@ python_bin="$(agentflow_repo_python "$repo_root")"
 tmpdir="$(mktemp -d)"
 
 pipeline_name="custom-kimi${CUSTOM_LOCAL_KIMI_PIPELINE_SUFFIX}-smoke"
-pipeline_path="$tmpdir/${pipeline_name}.yaml"
+pipeline_path="$tmpdir/${pipeline_name}.py"
 stdout_path="$tmpdir/smoke.stdout"
 stderr_path="$tmpdir/smoke.stderr"
 

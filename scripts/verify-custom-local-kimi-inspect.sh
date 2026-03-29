@@ -10,7 +10,7 @@ python_bin="$(agentflow_repo_python "$repo_root")"
 
 tmpdir="$(mktemp -d)"
 pipeline_name="custom-kimi${CUSTOM_LOCAL_KIMI_PIPELINE_SUFFIX}-inspect"
-inspect_path="$tmpdir/${pipeline_name}.yaml"
+inspect_path="$tmpdir/${pipeline_name}.py"
 stdout_path="$tmpdir/inspect.stdout"
 
 cleanup() {

@@ -421,12 +421,8 @@ def test_pipeline_validation_expands_fanout_value_nodes_and_group_dependencies()
 def test_pipeline_validation_expands_fanout_values_path_nodes_and_group_dependencies(tmp_path):
     manifests = tmp_path / "manifests"
     manifests.mkdir()
-    (manifests / "shards.yaml").write_text(
-        """- target: libpng
-  seed: 101
-- target: sqlite
-  seed: 202
-""",
+    (manifests / "shards.json").write_text(
+        '[{"target": "libpng", "seed": 101}, {"target": "sqlite", "seed": 202}]',
         encoding="utf-8",
     )
 
@@ -440,7 +436,7 @@ def test_pipeline_validation_expands_fanout_values_path_nodes_and_group_dependen
                     "id": "fuzz",
                     "fanout": {
                         "as": "shard",
-                        "values_path": "manifests/shards.yaml",
+                        "values_path": "manifests/shards.json",
                     },
                     "agent": "codex",
                     "prompt": "fuzz {{ shard.target }} with {{ shard.seed }} in {{ shard.node_id }}",
@@ -939,18 +935,18 @@ def test_pipeline_validation_expands_batched_fanout_nodes_and_scoped_dependencie
 def test_pipeline_validation_expands_fanout_matrix_path_nodes_and_group_dependencies(tmp_path):
     manifests = tmp_path / "manifests"
     manifests.mkdir()
-    (manifests / "axes.yaml").write_text(
-        """family:
-  - target: libpng
-    corpus: png
-  - target: sqlite
-    corpus: sql
-variant:
-  - sanitizer: asan
-    seed: 101
-  - sanitizer: ubsan
-    seed: 202
-""",
+    import json as _json
+    (manifests / "axes.json").write_text(
+        _json.dumps({
+            "family": [
+                {"target": "libpng", "corpus": "png"},
+                {"target": "sqlite", "corpus": "sql"},
+            ],
+            "variant": [
+                {"sanitizer": "asan", "seed": 101},
+                {"sanitizer": "ubsan", "seed": 202},
+            ],
+        }),
         encoding="utf-8",
     )
 
@@ -964,7 +960,7 @@ variant:
                     "id": "fuzz",
                     "fanout": {
                         "as": "shard",
-                        "matrix_path": "manifests/axes.yaml",
+                        "matrix_path": "manifests/axes.json",
                     },
                     "agent": "codex",
                     "prompt": "fuzz {{ shard.target }} {{ shard.sanitizer }} seed {{ shard.seed }} in {{ shard.node_id }}",
@@ -1136,7 +1132,7 @@ def test_pipeline_validation_rejects_fanout_with_multiple_expansion_modes():
 def test_pipeline_validation_rejects_fanout_with_mixed_inline_and_file_backed_modes(tmp_path):
     manifests = tmp_path / "manifests"
     manifests.mkdir()
-    (manifests / "shards.yaml").write_text("- target: libpng\n", encoding="utf-8")
+    (manifests / "shards.json").write_text('[{"target": "libpng"}]', encoding="utf-8")
 
     with pytest.raises(
         ValueError,
@@ -1152,7 +1148,7 @@ def test_pipeline_validation_rejects_fanout_with_mixed_inline_and_file_backed_mo
                         "id": "fuzz",
                         "fanout": {
                             "values": [{"target": "sqlite"}],
-                            "values_path": "manifests/shards.yaml",
+                            "values_path": "manifests/shards.json",
                         },
                         "agent": "codex",
                         "prompt": "hi",
@@ -1806,6 +1802,65 @@ def test_pipeline_validation_rejects_invalid_numeric_runtime_settings(
 
     assert exc_info.value.errors()[0]["loc"] == expected_loc
     assert exc_info.value.errors()[0]["type"] == expected_type
+
+
+def test_pipeline_validation_rejects_scheduled_node_before_watched_fanout():
+    payload = {
+        "name": "scheduled-before-fanout",
+        "working_dir": ".",
+        "nodes": [
+            {
+                "id": "monitor",
+                "agent": "codex",
+                "schedule": {
+                    "every_seconds": 600,
+                    "until_fanout_settles_from": "worker",
+                },
+                "prompt": "monitor",
+            },
+            {
+                "id": "worker",
+                "fanout": {"count": 2, "as": "shard"},
+                "agent": "codex",
+                "prompt": "worker {{ shard.number }}",
+            },
+        ],
+    }
+
+    with pytest.raises(ValidationError) as exc_info:
+        PipelineSpec.model_validate(payload)
+
+    assert "must appear after the watched fanout group" in str(exc_info.value)
+
+
+def test_pipeline_validation_rejects_scheduled_node_with_non_local_target():
+    payload = {
+        "name": "scheduled-non-local",
+        "working_dir": ".",
+        "nodes": [
+            {
+                "id": "worker",
+                "fanout": {"count": 1, "as": "shard"},
+                "agent": "codex",
+                "prompt": "worker {{ shard.number }}",
+            },
+            {
+                "id": "monitor",
+                "agent": "codex",
+                "schedule": {
+                    "every_seconds": 600,
+                    "until_fanout_settles_from": "worker",
+                },
+                "target": {"kind": "container", "image": "python:3.11"},
+                "prompt": "monitor",
+            },
+        ],
+    }
+
+    with pytest.raises(ValidationError) as exc_info:
+        PipelineSpec.model_validate(payload)
+
+    assert "scheduled nodes currently require a local target" in str(exc_info.value)
 
 
 @pytest.mark.asyncio

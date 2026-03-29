@@ -9,7 +9,6 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-import yaml
 
 import typer
 from pydantic import ValidationError
@@ -128,7 +127,7 @@ def _load_pipeline(path: str) -> object:
 
     try:
         return load_pipeline_from_path(path)
-    except (OSError, ValidationError, ValueError, yaml.YAMLError) as exc:
+    except (OSError, ValidationError, ValueError, json.JSONDecodeError) as exc:
         typer.echo(f"Failed to load pipeline `{path}`:\n{exc}", err=True)
         raise typer.Exit(code=1) from exc
 
@@ -2027,7 +2026,7 @@ def init(
                 err=True,
             )
             raise typer.Exit(code=1)
-        typer.echo(rendered_template.yaml, nl=False)
+        typer.echo(rendered_template.content, nl=False)
         return
 
     destination = Path(path).expanduser()
@@ -2047,7 +2046,7 @@ def init(
             raise typer.Exit(code=1)
 
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(rendered_template.yaml, encoding="utf-8")
+    destination.write_text(rendered_template.content, encoding="utf-8")
     for _relative_path, content, target in support_copies:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")

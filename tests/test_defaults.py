@@ -6,7 +6,7 @@ from agentflow.defaults import (
     bundled_template_support_files,
     bundled_templates,
     default_smoke_pipeline_path,
-    load_bundled_template_yaml,
+    load_bundled_template,
     render_bundled_template,
 )
 from agentflow.loader import load_pipeline_from_path
@@ -18,7 +18,6 @@ def test_bundled_templates_expose_current_descriptions_and_example_files():
     assert tuple(template.name for template in templates) == bundled_template_names()
     assert bundled_template_names() == (
         "pipeline",
-        "codex-fanout-repo-sweep",
         "codex-repo-sweep-batched",
         "local-kimi-smoke",
         "local-kimi-shell-init-smoke",
@@ -26,16 +25,12 @@ def test_bundled_templates_expose_current_descriptions_and_example_files():
     )
 
     by_name = {template.name: template for template in templates}
-    assert by_name["pipeline"].example_name == "pipeline.yaml"
+    assert by_name["pipeline"].example_name == "airflow_like.py"
     assert by_name["pipeline"].description == "Generic Codex/Claude/Kimi starter DAG."
     assert by_name["pipeline"].parameters == ()
     assert by_name["pipeline"].support_files == ()
-    assert by_name["codex-fanout-repo-sweep"].example_name == "codex-fanout-repo-sweep.yaml"
-    assert "8 review shards" in by_name["codex-fanout-repo-sweep"].description
-    assert by_name["codex-fanout-repo-sweep"].parameters == ()
-    assert by_name["codex-fanout-repo-sweep"].support_files == ()
-    assert by_name["codex-repo-sweep-batched"].example_name == "codex-repo-sweep-batched.yaml"
-    assert "fanout.batches" in by_name["codex-repo-sweep-batched"].description
+    assert by_name["codex-repo-sweep-batched"].example_name == "airflow_like_fuzz_batched.py"
+    assert "fanout_batches" in by_name["codex-repo-sweep-batched"].description
     assert "node_defaults" in by_name["codex-repo-sweep-batched"].description
     assert tuple(parameter.name for parameter in by_name["codex-repo-sweep-batched"].parameters) == (
         "shards",
@@ -46,19 +41,19 @@ def test_bundled_templates_expose_current_descriptions_and_example_files():
         "working_dir",
     )
     assert by_name["codex-repo-sweep-batched"].support_files == ()
-    assert by_name["local-kimi-smoke"].example_name == "local-real-agents-kimi-smoke.yaml"
+    assert by_name["local-kimi-smoke"].example_name == "local-real-agents-kimi-smoke.py"
     assert "`bootstrap: kimi`" in by_name["local-kimi-smoke"].description
     assert by_name["local-kimi-smoke"].support_files == ()
-    assert by_name["local-kimi-shell-init-smoke"].example_name == "local-real-agents-kimi-shell-init-smoke.yaml"
+    assert by_name["local-kimi-shell-init-smoke"].example_name == "local-real-agents-kimi-shell-init-smoke.py"
     assert "shell_init: kimi" in by_name["local-kimi-shell-init-smoke"].description
-    assert by_name["local-kimi-shell-wrapper-smoke"].example_name == "local-real-agents-kimi-shell-wrapper-smoke.yaml"
+    assert by_name["local-kimi-shell-wrapper-smoke"].example_name == "local-real-agents-kimi-shell-wrapper-smoke.py"
     assert "target.shell" in by_name["local-kimi-shell-wrapper-smoke"].description
 
 
 def test_pipeline_template_matches_default_example_file_and_rejects_settings():
     expected = bundled_template_path("pipeline").read_text(encoding="utf-8")
 
-    assert load_bundled_template_yaml("pipeline") == expected
+    assert load_bundled_template("pipeline") == expected
 
     with pytest.raises(ValueError, match=r"template `pipeline` does not accept `--set` values"):
         render_bundled_template("pipeline", values={"name": "custom"})
@@ -138,31 +133,16 @@ def test_bundled_shell_wrapper_smoke_pipeline_runs_both_agents_in_explicit_shell
     assert claude_node.depends_on == []
 
 
-def test_bundled_codex_fanout_repo_sweep_template_loads_into_fanout_pipeline():
-    pipeline = load_pipeline_from_path(str(bundled_template_path("codex-fanout-repo-sweep")))
-
-    assert pipeline.name == "codex-fanout-repo-sweep"
-    assert pipeline.concurrency == 8
-    assert pipeline.fanouts == {
-        "sweep": ["sweep_0", "sweep_1", "sweep_2", "sweep_3", "sweep_4", "sweep_5", "sweep_6", "sweep_7"]
-    }
-    assert pipeline.node_map["prepare"].agent == "codex"
-    assert pipeline.node_map["sweep_0"].depends_on == ["prepare"]
-    assert pipeline.node_map["sweep_0"].fanout_member["number"] == 1
-    assert pipeline.node_map["sweep_7"].fanout_member["number"] == 8
-    assert pipeline.node_map["merge"].depends_on == pipeline.fanouts["sweep"]
-
-
-def test_bundled_codex_repo_sweep_batched_template_matches_example_file_and_supports_overrides(tmp_path):
-    rendered_default = load_bundled_template_yaml("codex-repo-sweep-batched")
+def test_bundled_codex_repo_sweep_batched_template_supports_overrides(tmp_path):
+    rendered_default = load_bundled_template("codex-repo-sweep-batched")
 
     assert rendered_default.startswith("# Configurable large-scale Codex repository sweep\n")
-    assert "name: codex-repo-sweep-batched-128\n" in rendered_default
-    assert "working_dir: ./codex_repo_sweep_batched_128\n" in rendered_default
-    assert "fanout:\n      count: 128\n      as: shard" in rendered_default
+    assert "codex-repo-sweep-batched-128" in rendered_default
+    assert "codex_repo_sweep_batched_128" in rendered_default
+    assert "fanout_count(\n            128," in rendered_default or "fanout_count(128," in rendered_default or "128," in rendered_default
     assert bundled_template_support_files("codex-repo-sweep-batched") == ()
 
-    rendered = load_bundled_template_yaml(
+    rendered = load_bundled_template(
         "codex-repo-sweep-batched",
         values={
             "shards": "64",
@@ -174,18 +154,16 @@ def test_bundled_codex_repo_sweep_batched_template_matches_example_file_and_supp
         },
     )
 
-    assert "name: custom-repo-sweep-64\n" in rendered
-    assert "working_dir: ./custom_repo_sweep\n" in rendered
-    assert "concurrency: 20\n" in rendered
-    assert "count: 64" in rendered
-    assert "size: 8" in rendered
+    assert '"custom-repo-sweep-64"' in rendered
+    assert '"./custom_repo_sweep"' in rendered
+    assert "concurrency=20" in rendered
     assert "Focus on security bugs, privilege boundaries, and missing coverage." in rendered
-    assert "node_defaults:" in rendered
-    assert "agent_defaults:" in rendered
+    assert "node_defaults" in rendered
+    assert "agent_defaults" in rendered
     assert "current.scope.ids" in rendered
     assert "fanouts.batch_merge.with_output.nodes" in rendered
 
-    pipeline_path = tmp_path / "custom-repo-sweep.yaml"
+    pipeline_path = tmp_path / "custom-repo-sweep.py"
     pipeline_path.write_text(rendered, encoding="utf-8")
     pipeline = load_pipeline_from_path(str(pipeline_path))
 

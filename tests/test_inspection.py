@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from agentflow.inspection import build_launch_inspection, build_launch_inspection_summary, render_launch_inspection_summary
 from agentflow.loader import load_pipeline_from_path
 
@@ -12,19 +14,24 @@ def test_build_launch_inspection_summary_keeps_ambient_base_url_inheritance_when
     home.mkdir()
     (home / ".bashrc").write_text("export PATH=\"$PATH\"\n", encoding="utf-8")
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-ambient-base-url
-working_dir: .
-nodes:
-  - id: plan
-    agent: codex
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_interactive: true
-""",
+        json.dumps({
+            "name": "inspect-ambient-base-url",
+            "working_dir": ".",
+            "nodes": [
+                {
+                    "id": "plan",
+                    "agent": "codex",
+                    "prompt": "hi",
+                    "target": {
+                        "kind": "local",
+                        "shell": "bash",
+                        "shell_interactive": True,
+                    },
+                }
+            ],
+        }),
         encoding="utf-8",
     )
 
@@ -59,20 +66,25 @@ def test_build_launch_inspection_summary_reports_effective_bootstrap_home_when_t
     (custom_home / ".profile").write_text('if [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi\n', encoding="utf-8")
     (custom_home / ".bashrc").write_text("export PATH=\"$PATH\"\n", encoding="utf-8")
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: inspect-custom-home
-working_dir: .
-nodes:
-  - id: plan
-    agent: codex
-    prompt: hi
-    target:
-      kind: local
-      shell: env HOME={custom_home} bash
-      shell_login: true
-      shell_interactive: true
-""",
+        json.dumps({
+            "name": "inspect-custom-home",
+            "working_dir": ".",
+            "nodes": [
+                {
+                    "id": "plan",
+                    "agent": "codex",
+                    "prompt": "hi",
+                    "target": {
+                        "kind": "local",
+                        "shell": f"env HOME={custom_home} bash",
+                        "shell_login": True,
+                        "shell_interactive": True,
+                    },
+                }
+            ],
+        }),
         encoding="utf-8",
     )
 
@@ -107,22 +119,27 @@ def test_render_launch_inspection_summary_uses_notes_for_expected_env_pinning(
     (home / ".profile").write_text('if [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi\n', encoding="utf-8")
     (home / ".bashrc").write_text("kimi() { export ANTHROPIC_API_KEY=test-kimi-key; }\n", encoding="utf-8")
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-notes
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: kimi
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-      shell_interactive: true
-      shell_init: kimi
-""",
+        json.dumps({
+            "name": "inspect-notes",
+            "working_dir": ".",
+            "nodes": [
+                {
+                    "id": "review",
+                    "agent": "claude",
+                    "provider": "kimi",
+                    "prompt": "hi",
+                    "target": {
+                        "kind": "local",
+                        "shell": "bash",
+                        "shell_login": True,
+                        "shell_interactive": True,
+                        "shell_init": "kimi",
+                    },
+                }
+            ],
+        }),
         encoding="utf-8",
     )
 
@@ -154,18 +171,23 @@ def test_build_launch_inspection_summary_resolves_indirect_bootstrap_home_and_sh
     custom_home.mkdir()
     (custom_home / "auth.env").write_text("export ANTHROPIC_API_KEY=test-shell-key\n", encoding="utf-8")
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: inspect-indirect-custom-home
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    prompt: hi
-    target:
-      kind: local
-      shell: env CUSTOM_HOME={custom_home} HOME=$CUSTOM_HOME BASH_ENV=$HOME/auth.env bash -c '{{command}}'
-""",
+        json.dumps({
+            "name": "inspect-indirect-custom-home",
+            "working_dir": ".",
+            "nodes": [
+                {
+                    "id": "review",
+                    "agent": "claude",
+                    "prompt": "hi",
+                    "target": {
+                        "kind": "local",
+                        "shell": f"env CUSTOM_HOME={custom_home} HOME=$CUSTOM_HOME BASH_ENV=$HOME/auth.env bash -c '{{command}}'",
+                    },
+                }
+            ],
+        }),
         encoding="utf-8",
     )
 
@@ -189,20 +211,25 @@ def test_build_launch_inspection_summary_warns_when_active_login_startup_does_no
     (home / ".bash_profile").write_text('export PATH="$HOME/bin:$PATH"\n', encoding="utf-8")
     (home / ".bashrc").write_text("export PATH=\"$HOME/.local/bin:$PATH\"\n", encoding="utf-8")
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-startup-warning
-working_dir: .
-nodes:
-  - id: plan
-    agent: codex
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-      shell_interactive: true
-""",
+        json.dumps({
+            "name": "inspect-startup-warning",
+            "working_dir": ".",
+            "nodes": [
+                {
+                    "id": "plan",
+                    "agent": "codex",
+                    "prompt": "hi",
+                    "target": {
+                        "kind": "local",
+                        "shell": "bash",
+                        "shell_login": True,
+                        "shell_interactive": True,
+                    },
+                }
+            ],
+        }),
         encoding="utf-8",
     )
 

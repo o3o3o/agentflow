@@ -21,19 +21,24 @@ def test_inspect_command_treats_interactive_bash_rcfile_as_auth_source(
     home.mkdir()
     (home / "auth.bashrc").write_text("export ANTHROPIC_API_KEY=test-shell-key\n", encoding="utf-8")
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: inspect-claude-rcfile-provider-key
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: anthropic
-    prompt: hi
-    target:
-      kind: local
-      shell: "env HOME={home} bash {option} $HOME/auth.bashrc -ic '{{command}}'"
-""",
+        json.dumps({
+            "name": "inspect-claude-rcfile-provider-key",
+            "working_dir": ".",
+            "nodes": [
+                {
+                    "id": "review",
+                    "agent": "claude",
+                    "provider": "anthropic",
+                    "prompt": "hi",
+                    "target": {
+                        "kind": "local",
+                        "shell": f"env HOME={home} bash {option} $HOME/auth.bashrc -ic '{{command}}'",
+                    },
+                }
+            ],
+        }),
         encoding="utf-8",
     )
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -55,19 +60,24 @@ def test_doctor_with_pipeline_path_accepts_provider_credentials_from_interactive
     home.mkdir()
     (home / "auth.bashrc").write_text("export ANTHROPIC_API_KEY=test-shell-key\n", encoding="utf-8")
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: doctor-claude-rcfile-provider-key
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: anthropic
-    prompt: hi
-    target:
-      kind: local
-      shell: "env HOME={home} bash {option} $HOME/auth.bashrc -ic '{{command}}'"
-""",
+        json.dumps({
+            "name": "doctor-claude-rcfile-provider-key",
+            "working_dir": ".",
+            "nodes": [
+                {
+                    "id": "review",
+                    "agent": "claude",
+                    "provider": "anthropic",
+                    "prompt": "hi",
+                    "target": {
+                        "kind": "local",
+                        "shell": f"env HOME={home} bash {option} $HOME/auth.bashrc -ic '{{command}}'",
+                    },
+                }
+            ],
+        }),
         encoding="utf-8",
     )
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -89,19 +99,24 @@ def test_inspect_command_treats_nested_interactive_bash_rcfile_as_auth_source(
     home.mkdir()
     (home / "auth.bashrc").write_text("export ANTHROPIC_API_KEY=test-shell-key\n", encoding="utf-8")
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: inspect-claude-nested-rcfile-provider-key
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: anthropic
-    prompt: hi
-    target:
-      kind: local
-      shell: "sh -c 'env HOME={home} bash {option} $HOME/auth.bashrc -ic \\"{{command}}\\"'"
-""",
+        json.dumps({
+            "name": "inspect-claude-nested-rcfile-provider-key",
+            "working_dir": ".",
+            "nodes": [
+                {
+                    "id": "review",
+                    "agent": "claude",
+                    "provider": "anthropic",
+                    "prompt": "hi",
+                    "target": {
+                        "kind": "local",
+                        "shell": f"sh -c 'env HOME={home} bash {option} $HOME/auth.bashrc -ic \"{{command}}\"'",
+                    },
+                }
+            ],
+        }),
         encoding="utf-8",
     )
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -123,19 +138,24 @@ def test_doctor_with_pipeline_path_accepts_provider_credentials_from_nested_inte
     home.mkdir()
     (home / "auth.bashrc").write_text("export ANTHROPIC_API_KEY=test-shell-key\n", encoding="utf-8")
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: doctor-claude-nested-rcfile-provider-key
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: anthropic
-    prompt: hi
-    target:
-      kind: local
-      shell: "sh -c 'env HOME={home} bash {option} $HOME/auth.bashrc -ic \\"{{command}}\\"'"
-""",
+        json.dumps({
+            "name": "doctor-claude-nested-rcfile-provider-key",
+            "working_dir": ".",
+            "nodes": [
+                {
+                    "id": "review",
+                    "agent": "claude",
+                    "provider": "anthropic",
+                    "prompt": "hi",
+                    "target": {
+                        "kind": "local",
+                        "shell": f"sh -c 'env HOME={home} bash {option} $HOME/auth.bashrc -ic \"{{command}}\"'",
+                    },
+                }
+            ],
+        }),
         encoding="utf-8",
     )
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -158,19 +178,24 @@ def test_inspect_command_treats_exec_prefixed_login_bash_startup_as_auth_source(
     (home / ".profile").write_text('if [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi\n', encoding="utf-8")
     (home / ".bashrc").write_text("export ANTHROPIC_API_KEY=test-shell-key\n", encoding="utf-8")
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: inspect-claude-exec-login-startup
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: anthropic
-    prompt: hi
-    target:
-      kind: local
-      shell: "exec env HOME={home} bash -lic '{{command}}'"
-""",
+        json.dumps({
+            "name": "inspect-claude-exec-login-startup",
+            "working_dir": ".",
+            "nodes": [
+                {
+                    "id": "review",
+                    "agent": "claude",
+                    "provider": "anthropic",
+                    "prompt": "hi",
+                    "target": {
+                        "kind": "local",
+                        "shell": f"exec env HOME={home} bash -lic '{{command}}'",
+                    },
+                }
+            ],
+        }),
         encoding="utf-8",
     )
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -191,19 +216,24 @@ def test_inspect_command_treats_nested_login_bash_startup_as_auth_source(
     (home / ".profile").write_text('if [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi\n', encoding="utf-8")
     (home / ".bashrc").write_text("export ANTHROPIC_API_KEY=test-shell-key\n", encoding="utf-8")
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: inspect-claude-nested-login-startup
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: anthropic
-    prompt: hi
-    target:
-      kind: local
-      shell: "sh -c 'env HOME={home} bash -lic \\"{{command}}\\"'"
-""",
+        json.dumps({
+            "name": "inspect-claude-nested-login-startup",
+            "working_dir": ".",
+            "nodes": [
+                {
+                    "id": "review",
+                    "agent": "claude",
+                    "provider": "anthropic",
+                    "prompt": "hi",
+                    "target": {
+                        "kind": "local",
+                        "shell": f"sh -c 'env HOME={home} bash -lic \"{{command}}\"'",
+                    },
+                }
+            ],
+        }),
         encoding="utf-8",
     )
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -224,21 +254,26 @@ def test_inspect_command_prefers_codex_login_bash_startup_auth_over_kimi_helper_
     (home / ".profile").write_text('if [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi\n', encoding="utf-8")
     (home / ".bashrc").write_text("export OPENAI_API_KEY=test-shell-key\n", encoding="utf-8")
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        """name: inspect-codex-login-startup-kimi-helper
-working_dir: .
-nodes:
-  - id: plan
-    agent: codex
-    prompt: hi
-    target:
-      kind: local
-      shell: bash
-      shell_login: true
-      shell_interactive: true
-      shell_init: kimi
-""",
+        json.dumps({
+            "name": "inspect-codex-login-startup-kimi-helper",
+            "working_dir": ".",
+            "nodes": [
+                {
+                    "id": "plan",
+                    "agent": "codex",
+                    "prompt": "hi",
+                    "target": {
+                        "kind": "local",
+                        "shell": "bash",
+                        "shell_login": True,
+                        "shell_interactive": True,
+                        "shell_init": "kimi",
+                    },
+                }
+            ],
+        }),
         encoding="utf-8",
     )
     monkeypatch.setenv("HOME", str(home))
@@ -263,19 +298,24 @@ def test_doctor_with_pipeline_path_accepts_provider_credentials_from_nested_logi
     (home / ".profile").write_text('if [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi\n', encoding="utf-8")
     (home / ".bashrc").write_text("export ANTHROPIC_API_KEY=test-shell-key\n", encoding="utf-8")
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: doctor-claude-nested-login-startup
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: anthropic
-    prompt: hi
-    target:
-      kind: local
-      shell: "sh -c 'env HOME={home} bash -lic \\"{{command}}\\"'"
-""",
+        json.dumps({
+            "name": "doctor-claude-nested-login-startup",
+            "working_dir": ".",
+            "nodes": [
+                {
+                    "id": "review",
+                    "agent": "claude",
+                    "provider": "anthropic",
+                    "prompt": "hi",
+                    "target": {
+                        "kind": "local",
+                        "shell": f"sh -c 'env HOME={home} bash -lic \"{{command}}\"'",
+                    },
+                }
+            ],
+        }),
         encoding="utf-8",
     )
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)

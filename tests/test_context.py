@@ -316,3 +316,107 @@ def test_current_node_context_preserves_runtime_identity_when_member_keys_confli
         "depends_on": ["manifest-dependency"],
         "target": "libpng",
     }
+
+
+def test_build_render_context_exposes_artifact_paths_and_tick_metadata_for_periodic_nodes(tmp_path: Path):
+    pipeline = load_pipeline_from_data(
+        {
+            "name": "periodic-context",
+            "working_dir": str(tmp_path),
+            "nodes": [
+                {
+                    "id": "worker",
+                    "fanout": {
+                        "count": 2,
+                        "as": "shard",
+                    },
+                    "agent": "codex",
+                    "prompt": "worker {{ shard.number }}",
+                },
+                {
+                    "id": "monitor",
+                    "agent": "codex",
+                    "schedule": {
+                        "every_seconds": 600,
+                        "until_fanout_settles_from": "worker",
+                    },
+                    "prompt": "monitor",
+                },
+            ],
+        },
+        base_dir=tmp_path,
+    )
+    results = {
+        "worker_0": NodeResult(node_id="worker_0", status=NodeStatus.RUNNING, output="alpha"),
+        "worker_1": NodeResult(node_id="worker_1", status=NodeStatus.PENDING),
+        "monitor": NodeResult(node_id="monitor", status=NodeStatus.RUNNING, tick_count=2),
+    }
+
+    context = build_render_context(
+        pipeline,
+        results,
+        current_node=pipeline.node_map["monitor"],
+        run_id="run123",
+        artifacts_base_dir=tmp_path / ".agentflow" / "runs",
+        current_tick_number=2,
+        current_tick_started_at="2026-03-15T12:00:00+00:00",
+    )
+
+    assert context["nodes"]["worker_0"]["artifacts"]["stdout_log"].endswith("/run123/artifacts/worker_0/stdout.log")
+    assert context["fanouts"]["worker"]["nodes"][0]["artifacts"]["stderr_log"].endswith(
+        "/run123/artifacts/worker_0/stderr.log"
+    )
+    assert context["current"]["schedule"]["every_seconds"] == 600
+    assert context["current"]["schedule"]["until_fanout_settles_from"] == "worker"
+    assert context["current"]["tick_number"] == 2
+    assert context["current"]["tick_started_at"] == "2026-03-15T12:00:00+00:00"
+
+
+def test_render_node_prompt_can_use_artifact_paths_and_tick_metadata(tmp_path: Path):
+    pipeline = load_pipeline_from_data(
+        {
+            "name": "periodic-render",
+            "working_dir": str(tmp_path),
+            "nodes": [
+                {
+                    "id": "worker",
+                    "fanout": {
+                        "count": 1,
+                        "as": "shard",
+                    },
+                    "agent": "codex",
+                    "prompt": "worker {{ shard.number }}",
+                },
+                {
+                    "id": "monitor",
+                    "agent": "codex",
+                    "schedule": {
+                        "every_seconds": 600,
+                        "until_fanout_settles_from": "worker",
+                    },
+                    "prompt": (
+                        "tick={{ current.tick_number }} "
+                        "stdout={{ fanouts.worker.nodes[0].artifacts.stdout_log }}"
+                    ),
+                },
+            ],
+        },
+        base_dir=tmp_path,
+    )
+    results = {
+        "worker_0": NodeResult(node_id="worker_0", status=NodeStatus.RUNNING, output="alpha"),
+        "monitor": NodeResult(node_id="monitor", status=NodeStatus.RUNNING, tick_count=1),
+    }
+
+    rendered = render_node_prompt(
+        pipeline,
+        pipeline.node_map["monitor"],
+        results,
+        run_id="run123",
+        artifacts_base_dir=tmp_path / ".agentflow" / "runs",
+        current_tick_number=1,
+        current_tick_started_at="2026-03-15T12:00:00+00:00",
+    )
+
+    assert rendered.endswith("/run123/artifacts/worker_0/stdout.log")
+    assert rendered.startswith("tick=1 ")

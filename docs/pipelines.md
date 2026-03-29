@@ -2,7 +2,7 @@
 
 Pipeline authoring details, execution targets, and per-agent launch behavior.
 
-## Airflow-like Python DAG
+## Python DAG
 
 ```python
 from agentflow import DAG, claude, codex, kimi
@@ -30,12 +30,12 @@ with DAG("demo", working_dir=".", concurrency=3) as dag:
 spec = dag.to_spec()
 ```
 
-The Python helpers accept the same per-node kwargs as YAML, including `fanout`.
-Import `fanout_count(...)`, `fanout_values(...)`, `fanout_values_path(...)`, `fanout_matrix(...)`, `fanout_matrix_path(...)`, `fanout_group_by(...)`, or `fanout_batches(...)` when you want Python-native fanout payloads instead of raw dictionaries.
+The Python helpers accept per-node kwargs including `fanout`.
+Import `fanout_count(...)`, `fanout_values(...)`, `fanout_values_path(...)`, `fanout_matrix(...)`, `fanout_matrix_path(...)`, `fanout_group_by(...)`, or `fanout_batches(...)` for fanout payloads.
 `DAG(...)` also accepts `fail_fast`, `node_defaults`, `agent_defaults`, and `local_target_defaults`.
-Use `dag.to_json()` or `dag.to_yaml()` to serialize a compact runnable pipeline, `dag.to_payload()` for the raw object structure, and `dag.to_spec()` for the fully expanded in-memory pipeline object.
+Use `dag.to_json()` to serialize a compact runnable pipeline, `dag.to_payload()` for the raw object structure, and `dag.to_spec()` for the fully expanded in-memory pipeline object.
 
-See `examples/airflow_like.py` for the small static DAG. `examples/airflow_like_fuzz_batched.py` and `examples/airflow_like_fuzz_grouped.py` remain in the repo as advanced fanout examples only.
+See `examples/airflow_like.py` for the small static DAG. `examples/airflow_like_fuzz_batched.py` and `examples/airflow_like_fuzz_grouped.py` are advanced fanout examples.
 
 ## Pipeline schema
 
@@ -43,6 +43,7 @@ Each node supports:
 
 - `agent`: `codex`, `claude`, or `kimi`
 - `fanout`: `count`, `values`, `values_path`, `matrix`, `matrix_path`, `group_by`, or `batches`, plus optional `as`, `derive`, and matrix-only `include` / `exclude`
+- `schedule`: optional periodic execution for local nodes with `every_seconds`, `until_fanout_settles_from`, and optional `actuation`
 - `model`: any model string understood by the backend
 - `provider`: a string or a structured provider config with `base_url`, `api_key_env`, headers, and env
 - `tools`: `read_only` or `read_write`
@@ -65,219 +66,193 @@ Top-level pipeline controls include:
 
 `node_defaults` is the pipeline-wide baseline. `agent_defaults` is the agent-specific override layer. Explicit node values always win.
 
-```yaml
-node_defaults:
-  agent: codex
-  tools: read_only
-  capture: final
-
-agent_defaults:
-  codex:
-    model: gpt-5-codex
-    retries: 1
-    retry_backoff_seconds: 1
-    extra_args:
-      - "--search"
-      - "-c"
-      - 'model_reasoning_effort="high"'
+```python
+DAG(
+    "demo",
+    node_defaults={
+        "agent": "codex",
+        "tools": "read_only",
+        "capture": "final",
+    },
+    agent_defaults={
+        "codex": {
+            "model": "gpt-5-codex",
+            "retries": 1,
+            "retry_backoff_seconds": 1,
+            "extra_args": ["--search", "-c", 'model_reasoning_effort="high"'],
+        }
+    },
+)
 ```
 
 ## Fan-out nodes
 
 Use `fanout` when a DAG needs many nearly identical nodes, such as repository sweeps, release checklists, or shardable audits. AgentFlow expands those nodes into an ordinary concrete DAG before validation and execution.
 
-For uniform work, use `fanout.count`:
+For uniform work, use `fanout_count`:
 
-```yaml
-nodes:
-  - id: review
-    fanout:
-      count: 8
-      as: shard
-    agent: codex
-    prompt: |
-      You are shard {{ shard.number }} of {{ shard.count }}.
-      Use suffix {{ shard.suffix }} for any per-shard paths.
+```python
+from agentflow import DAG, codex, fanout_count
 
-  - id: merge
-    agent: codex
-    depends_on: [review]
-    prompt: |
-      {% for shard in fanouts.review.nodes %}
-      ## {{ shard.id }}
-      {{ shard.output or "(no output)" }}
-
-      {% endfor %}
+with DAG("sweep-demo", concurrency=8) as dag:
+    review = codex(
+        task_id="review",
+        fanout=fanout_count(8, as_="shard"),
+        prompt=(
+            "You are shard {{ shard.number }} of {{ shard.count }}.\n"
+            "Use suffix {{ shard.suffix }} for any per-shard paths.\n"
+        ),
+    )
+    merge = codex(
+        task_id="merge",
+        prompt=(
+            "{% for shard in fanouts.review.nodes %}\n"
+            "## {{ shard.id }}\n"
+            '{{ shard.output or "(no output)" }}\n\n'
+            "{% endfor %}"
+        ),
+    )
+    review >> merge
 ```
 
 For scaffolds, start with one of the bundled templates:
 
 ```bash
-agentflow init > pipeline.yaml
-agentflow init repo-sweep.yaml --template codex-fanout-repo-sweep
-agentflow init repo-sweep-batched.yaml --template codex-repo-sweep-batched
+agentflow init > pipeline.py
+agentflow init repo-sweep-batched.py --template codex-repo-sweep-batched
 ```
 
-The bundled repo sweep examples are [`examples/codex-fanout-repo-sweep.yaml`](/home/shou/agentflow/examples/codex-fanout-repo-sweep.yaml) and [`examples/codex-repo-sweep-batched.yaml`](/home/shou/agentflow/examples/codex-repo-sweep-batched.yaml). The repository also keeps [`examples/airflow_like_fuzz_batched.py`](/home/shou/agentflow/examples/airflow_like_fuzz_batched.py) and [`examples/airflow_like_fuzz_grouped.py`](/home/shou/agentflow/examples/airflow_like_fuzz_grouped.py) as advanced examples only.
+When each member needs explicit metadata, use `fanout_values`:
 
-When each member needs explicit metadata, use `fanout.values`:
+```python
+from agentflow import fanout_values
 
-```yaml
-nodes:
-  - id: review
-    fanout:
-      as: shard
-      values:
-        - repo: api
-          owner: platform
-          priority: high
-        - repo: billing
-          owner: payments
-          priority: medium
-    agent: codex
-    prompt: |
-      Review {{ shard.repo }} for {{ shard.owner }} (priority: {{ shard.priority }}).
+fanout=fanout_values(
+    [
+        {"repo": "api", "owner": "platform", "priority": "high"},
+        {"repo": "billing", "owner": "payments", "priority": "medium"},
+    ],
+    as_="shard",
+)
 ```
 
-When the metadata is naturally multi-axis, use `fanout.matrix`. Add `fanout.exclude` and `fanout.include` when a cartesian product needs a few curated adjustments:
+When the metadata is naturally multi-axis, use `fanout_matrix`. Add `exclude` and `include` when a cartesian product needs curated adjustments:
 
-```yaml
-nodes:
-  - id: review
-    fanout:
-      as: shard
-      matrix:
-        repo:
-          - name: api
-            owner: platform
-          - name: billing
-            owner: payments
-        check:
-          - kind: security
-          - kind: docs
-      exclude:
-        - name: billing
-          kind: docs
-      include:
-        - repo:
-            name: marketing
-            owner: growth
-          check:
-            kind: docs
-    agent: codex
-    prompt: |
-      Run the {{ shard.kind }} review for {{ shard.name }}.
+```python
+from agentflow import fanout_matrix
+
+fanout=fanout_matrix(
+    {
+        "repo": [
+            {"name": "api", "owner": "platform"},
+            {"name": "billing", "owner": "payments"},
+        ],
+        "check": [{"kind": "security"}, {"kind": "docs"}],
+    },
+    as_="shard",
+    exclude=[{"name": "billing", "kind": "docs"}],
+    include=[{"repo": {"name": "marketing", "owner": "growth"}, "check": {"kind": "docs"}}],
+)
 ```
 
-When prompts and workdirs should share computed fields, add `fanout.derive`:
+When prompts and workdirs should share computed fields, add `derive`:
 
-```yaml
-nodes:
-  - id: review
-    fanout:
-      as: shard
-      matrix:
-        repo:
-          - name: api
-          - name: billing
-        check:
-          - kind: security
-          - kind: docs
-      derive:
-        label: "{{ shard.name }}/{{ shard.kind }}"
-        workspace: "agents/{{ shard.name }}_{{ shard.kind }}_{{ shard.suffix }}"
-    agent: codex
-    target:
-      kind: local
-      cwd: "{{ shard.workspace }}"
-    prompt: |
-      Work in {{ shard.workspace }} and summarize {{ shard.label }}.
+```python
+fanout=fanout_matrix(
+    {
+        "repo": [{"name": "api"}, {"name": "billing"}],
+        "check": [{"kind": "security"}, {"kind": "docs"}],
+    },
+    as_="shard",
+    derive={
+        "label": "{{ shard.name }}/{{ shard.kind }}",
+        "workspace": "agents/{{ shard.name }}_{{ shard.kind }}_{{ shard.suffix }}",
+    },
+)
 ```
 
-When the roster should live outside the pipeline file, use `fanout.values_path` or `fanout.matrix_path`. `values_path` accepts JSON/YAML lists and CSV rows. `matrix_path` accepts JSON/YAML objects. Relative paths resolve from the pipeline file.
+When the roster should live outside the pipeline file, use `fanout_values_path` or `fanout_matrix_path`. `values_path` accepts JSON lists and CSV rows. `matrix_path` accepts JSON objects. Relative paths resolve from the pipeline file.
 
-```yaml
-nodes:
-  - id: review
-    fanout:
-      as: shard
-      values_path: manifests/repos.yaml
-    agent: codex
-    prompt: |
-      Review {{ shard.repo }} for {{ shard.owner }}.
+```python
+from agentflow import fanout_values_path
+
+fanout=fanout_values_path("manifests/repos.json", as_="shard")
 ```
 
-When reducers should follow fields already present on another fanout, use `fanout.group_by`:
+When reducers should follow fields already present on another fanout, use `fanout_group_by`:
 
-```yaml
-nodes:
-  - id: review
-    fanout:
-      as: shard
-      values_path: manifests/repos.yaml
-    agent: codex
-    prompt: |
-      Review {{ shard.repo }} for {{ shard.owner }}.
+```python
+from agentflow import fanout_group_by
 
-  - id: owner_merge
-    fanout:
-      as: owner
-      group_by:
-        from: review
-        fields: [owner]
-    agent: codex
-    depends_on: [review]
-    prompt: |
-      Reduce {{ current.owner }} with {{ current.member_ids | length }} scoped inputs.
-
-      {% for shard in current.scope.with_output.nodes %}
-      ## {{ shard.node_id }} :: {{ shard.repo }}
-      {{ shard.output }}
-
-      {% endfor %}
+family_merge = codex(
+    task_id="owner_merge",
+    fanout=fanout_group_by("review", ["owner"], as_="owner"),
+    prompt=(
+        "Reduce {{ current.owner }} with {{ current.member_ids | length }} scoped inputs.\n\n"
+        "{% for shard in current.scope.with_output.nodes %}\n"
+        "## {{ shard.node_id }} :: {{ shard.repo }}\n"
+        "{{ shard.output }}\n\n"
+        "{% endfor %}"
+    ),
+)
 ```
 
-When one final reducer would be too noisy, use `fanout.batches`:
+When one final reducer would be too noisy, use `fanout_batches`:
 
-```yaml
-nodes:
-  - id: review
-    fanout:
-      count: 128
-      as: shard
-      derive:
-        workspace: "agents/review_{{ shard.suffix }}"
+```python
+from agentflow import fanout_batches
 
-  - id: batch_merge
-    fanout:
-      as: batch
-      batches:
-        from: review
-        size: 16
-    depends_on: [review]
-    prompt: |
-      Reduce shards {{ current.start_number }} through {{ current.end_number }}.
-
-      {% for shard in current.scope.with_output.nodes %}
-      ## {{ shard.node_id }} (status: {{ shard.status }})
-      {{ shard.output }}
-
-      {% endfor %}
+batch_merge = codex(
+    task_id="batch_merge",
+    fanout=fanout_batches("review", 16, as_="batch"),
+    prompt=(
+        "Reduce shards {{ current.start_number }} through {{ current.end_number }}.\n\n"
+        "{% for shard in current.scope.with_output.nodes %}\n"
+        "## {{ shard.node_id }} (status: {{ shard.status }})\n"
+        "{{ shard.output }}\n\n"
+        "{% endfor %}"
+    ),
+)
 ```
 
-Prompt rendering exposes `fanouts.<group>.nodes`, `outputs`, `values`, `summary`, `completed`, `failed`, `with_output`, and `without_output`. Reducers created from `fanout.group_by` or `fanout.batches` also get `current.member_ids`, `current.members`, and `current.scope`.
+Prompt rendering exposes `fanouts.<group>.nodes`, `outputs`, `values`, `summary`, `completed`, `failed`, `with_output`, and `without_output`. Reducers created from `fanout_group_by` or `fanout_batches` also get `current.member_ids`, `current.members`, and `current.scope`.
+
+## Periodic nodes
+
+Use `schedule` when one node should re-run on a fixed interval inside the same pipeline execution.
+
+```python
+monitor = codex(
+    task_id="monitor",
+    schedule={
+        "every_seconds": 600,
+        "until_fanout_settles_from": "worker",
+        "actuation": "output_json",
+    },
+    prompt=(
+        "Tick {{ current.tick_number }}\n"
+        "{% for shard in fanouts.worker.nodes %}\n"
+        "- {{ shard.id }} stdout={{ shard.artifacts.stdout_log }} stderr={{ shard.artifacts.stderr_log }}\n"
+        "{% endfor %}"
+    ),
+)
+```
+
+Periodic nodes are local-only in v1. They stop automatically once the watched fanout group reaches terminal state. Prompt rendering also exposes `current.tick_number`, `current.tick_started_at`, and per-node artifact paths such as `shard.artifacts.stdout_log` so a collector can grep full shard logs directly.
+
+With `actuation: output_json`, the node may emit a JSON envelope with an `analysis` string plus `cancel` / `rerun` actions for members of the watched fanout group.
 
 Expansion rules:
 
 - A fan-out node accepts exactly one expansion mode: `count`, `values`, `values_path`, `matrix`, `matrix_path`, `group_by`, or `batches`.
 - A fan-out node with `id: review` and `count: 8` expands to `review_0` through `review_7`. The suffix is zero-padded when needed.
-- `fanout.values` and `fanout.values_path` lift identifier-friendly dictionary keys onto the alias.
-- `fanout.matrix` and `fanout.matrix_path` expand the cartesian product in declaration order. Axis dictionaries are available both under the axis name and as lifted keys.
-- `fanout.group_by` creates one reducer member per unique field combination from the source fanout, in first-seen order.
-- `fanout.batches` partitions a source fanout into fixed-size reducer groups.
-- `fanout.exclude` removes matrix members whose metadata matches every field in a selector object. `fanout.include` appends explicit members after exclusions.
-- `fanout.derive` adds computed fields after the base expansion is resolved. Derived fields render in declaration order.
-- `fanout.as` picks the template variable name for pre-validation substitution.
+- `fanout_values` and `fanout_values_path` lift identifier-friendly dictionary keys onto the alias.
+- `fanout_matrix` and `fanout_matrix_path` expand the cartesian product in declaration order. Axis dictionaries are available both under the axis name and as lifted keys.
+- `fanout_group_by` creates one reducer member per unique field combination from the source fanout, in first-seen order.
+- `fanout_batches` partitions a source fanout into fixed-size reducer groups.
+- `exclude` removes matrix members whose metadata matches every field in a selector object. `include` appends explicit members after exclusions.
+- `derive` adds computed fields after the base expansion is resolved. Derived fields render in declaration order.
+- `as` picks the template variable name for pre-validation substitution.
 - Ordinary runtime prompt templates such as `{{ nodes.prepare.output }}` are left intact and still render at execution time.
 - A downstream `depends_on: [review]` expands to all members of the `review` group.
 
@@ -305,32 +280,20 @@ Runs the prepared agent command directly on the host. Set `target.shell` to wrap
 
 The local bootstrap fields `shell_login`, `shell_interactive`, and `shell_init` require `target.shell`. For the common Kimi helper case, `target.bootstrap: kimi` expands to the same `bash` + login + interactive + `shell_init` setup automatically.
 
-```yaml
-target:
-  kind: local
-  bootstrap: kimi
+```python
+target={"bootstrap": "kimi"}
 ```
 
 When most local nodes share the same shell bootstrap, move that block to top-level `local_target_defaults` and only override the nodes that differ.
 
-```yaml
-local_target_defaults:
-  bootstrap: kimi
-
-nodes:
-  - id: codex_plan
-    agent: codex
-    prompt: Reply with exactly: codex ok
-
-  - id: claude_review
-    agent: claude
-    provider: kimi
-    prompt: Reply with exactly: claude ok
-    target:
-      cwd: review
+```python
+DAG(
+    "demo",
+    local_target_defaults={"bootstrap": "kimi"},
+)
 ```
 
-If one local node should not inherit the shared bootstrap, set `target.bootstrap: null` on that node.
+If one local node should not inherit the shared bootstrap, set `target={"bootstrap": None}` on that node.
 `shell_init` is treated as a bootstrap prerequisite: if it exits non-zero, AgentFlow does not launch the wrapped agent command.
 
 ### Container

@@ -247,7 +247,7 @@ pipeline_description = sys.argv[4]
 
 if not example_path.is_file():
     fallback_templates = {
-        "local-real-agents-kimi-smoke.yaml": """
+        "local-real-agents-kimi-smoke.py": """
 working_dir: .
 concurrency: 2
 local_target_defaults:
@@ -273,7 +273,7 @@ nodes:
       - kind: output_contains
         value: claude ok
 """,
-        "local-real-agents-kimi-shell-init-smoke.yaml": """
+        "local-real-agents-kimi-shell-init-smoke.py": """
 working_dir: .
 concurrency: 2
 local_target_defaults:
@@ -302,7 +302,7 @@ nodes:
       - kind: output_contains
         value: claude ok
 """,
-        "local-real-agents-kimi-shell-wrapper-smoke.yaml": """
+        "local-real-agents-kimi-shell-wrapper-smoke.py": """
 working_dir: .
 concurrency: 2
 local_target_defaults:
@@ -356,7 +356,7 @@ write_custom_local_kimi_pipeline() {
     "$pipeline_path" \
     "$pipeline_name" \
     "$pipeline_description" \
-    "local-real-agents-kimi-smoke.yaml"
+    "local-real-agents-kimi-smoke.py"
 }
 
 write_custom_local_kimi_shell_init_pipeline() {
@@ -368,7 +368,7 @@ write_custom_local_kimi_shell_init_pipeline() {
     "$pipeline_path" \
     "$pipeline_name" \
     "$pipeline_description" \
-    "local-real-agents-kimi-shell-init-smoke.yaml"
+    "local-real-agents-kimi-shell-init-smoke.py"
 }
 
 write_custom_local_kimi_shell_wrapper_pipeline() {
@@ -380,5 +380,5 @@ write_custom_local_kimi_shell_wrapper_pipeline() {
     "$pipeline_path" \
     "$pipeline_name" \
     "$pipeline_description" \
-    "local-real-agents-kimi-shell-wrapper-smoke.yaml"
+    "local-real-agents-kimi-shell-wrapper-smoke.py"
 }

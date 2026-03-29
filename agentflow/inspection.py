@@ -1025,6 +1025,7 @@ def build_launch_inspection(
             "id": node.id,
             "agent": node.agent.value,
             "model": node.model,
+            "schedule": node.schedule.model_dump(mode="json") if node.schedule is not None else None,
             "tools": node.tools.value,
             "capture": node.capture.value,
             "skills": list(node.skills),

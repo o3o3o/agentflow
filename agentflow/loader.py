@@ -1,22 +1,37 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
-
-import yaml
 
 from agentflow.specs import PipelineSpec, expand_compact_nodes
 
 
 def load_pipeline_from_path(path: str | Path) -> PipelineSpec:
     path = Path(path)
+    if path.suffix == ".py":
+        return _load_pipeline_from_python(path)
     data = path.read_text(encoding="utf-8")
     return load_pipeline_from_text(data, base_dir=path.parent.resolve())
 
 
+def _load_pipeline_from_python(path: Path) -> PipelineSpec:
+    resolved = path.resolve()
+    result = subprocess.run(
+        [sys.executable, str(resolved)],
+        capture_output=True,
+        text=True,
+        cwd=str(resolved.parent),
+    )
+    if result.returncode != 0:
+        raise ValueError(f"pipeline script `{path}` failed:\n{result.stderr.strip()}")
+    return load_pipeline_from_text(result.stdout, base_dir=path.parent.resolve())
+
+
 def load_pipeline_from_text(data: str, *, base_dir: str | Path | None = None) -> PipelineSpec:
-    parsed = _parse_pipeline_text(data)
+    parsed = json.loads(data)
     return load_pipeline_from_data(parsed, base_dir=base_dir)
 
 
@@ -27,15 +42,6 @@ def load_pipeline_from_data(data: Any, *, base_dir: str | Path | None = None) ->
         data = _resolve_file_relative_paths(data, resolved_base_dir)
         data = {**data, "base_dir": str(resolved_base_dir)}
     return PipelineSpec.model_validate(data)
-
-
-def _parse_pipeline_text(data: str) -> Any:
-    parsed: Any
-    try:
-        parsed = json.loads(data)
-    except json.JSONDecodeError:
-        parsed = yaml.safe_load(data)
-    return parsed
 
 
 def _resolve_base_dir(base_dir: str | Path) -> Path:

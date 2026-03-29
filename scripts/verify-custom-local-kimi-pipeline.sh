@@ -12,7 +12,7 @@ pipeline_description="Temporary external real-agent check-local test for local C
 expected_trigger="$CUSTOM_LOCAL_KIMI_EXPECTED_TRIGGER"
 
 tmpdir="$(mktemp -d)"
-pipeline_path="$tmpdir/${pipeline_name}.yaml"
+pipeline_path="$tmpdir/${pipeline_name}.py"
 stdout_path="$tmpdir/check-local.stdout"
 stderr_path="$tmpdir/check-local.stderr"
 

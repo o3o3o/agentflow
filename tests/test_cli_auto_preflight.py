@@ -18,21 +18,26 @@ def test_inspect_auto_preflight_reports_login_startup_auth_dependency(
     custom_home = tmp_path / "custom-home"
     custom_home.mkdir()
 
-    pipeline_path = tmp_path / "pipeline.yaml"
+    pipeline_path = tmp_path / "pipeline.json"
     pipeline_path.write_text(
-        f"""name: inspect-shell-startup-auth-preflight
-working_dir: .
-nodes:
-  - id: review
-    agent: claude
-    provider: anthropic
-    prompt: hi
-    target:
-      kind: local
-      shell: "env HOME={custom_home} bash"
-      shell_login: true
-      shell_interactive: true
-""",
+        json.dumps({
+            "name": "inspect-shell-startup-auth-preflight",
+            "working_dir": ".",
+            "nodes": [
+                {
+                    "id": "review",
+                    "agent": "claude",
+                    "provider": "anthropic",
+                    "prompt": "hi",
+                    "target": {
+                        "kind": "local",
+                        "shell": f"env HOME={custom_home} bash",
+                        "shell_login": True,
+                        "shell_interactive": True,
+                    },
+                }
+            ],
+        }),
         encoding="utf-8",
     )
 
