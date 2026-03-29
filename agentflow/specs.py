@@ -441,6 +441,7 @@ class EC2Target(BaseModel):
     spot: bool = False
     terminate: bool = True
     snapshot: bool = False
+    shared: str | None = None
 
 
 class ECSTarget(BaseModel):
@@ -459,6 +460,7 @@ class ECSTarget(BaseModel):
     security_groups: list[str] = Field(default_factory=list)
     assign_public_ip: bool = True
     install_agents: list[str] = Field(default_factory=lambda: ["codex", "claude"])
+    shared: str | None = None
 
 
 TargetSpec = Annotated[

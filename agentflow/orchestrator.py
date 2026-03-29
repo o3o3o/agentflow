@@ -93,6 +93,40 @@ class Orchestrator:
 
     def __post_init__(self) -> None:
         self._run_slots = threading.Semaphore(self.max_concurrent_runs)
+        self._inject_shared_resource_manager()
+
+    def _inject_shared_resource_manager(self) -> None:
+        """Give EC2 and ECS runners a shared resource manager."""
+        from agentflow.cloud.shared import SharedResourceManager
+
+        manager = SharedResourceManager()
+        for kind in ("ec2", "ecs"):
+            try:
+                runner = self.runners.get(kind)
+                runner._shared_manager = manager
+            except KeyError:
+                pass
+
+    def _register_shared_resources(self, pipeline: "PipelineSpec") -> None:
+        """Scan nodes for shared targets and pre-register expected ref counts."""
+        from collections import Counter
+
+        shared_counts: Counter[str] = Counter()
+        for node in pipeline.nodes:
+            shared_id = getattr(node.target, "shared", None)
+            if shared_id:
+                shared_counts[shared_id] += 1
+
+        if shared_counts:
+            for kind in ("ec2", "ecs"):
+                try:
+                    runner = self.runners.get(kind)
+                    mgr = getattr(runner, "_shared_manager", None)
+                    if mgr:
+                        for sid, count in shared_counts.items():
+                            mgr.register_expected(sid, count)
+                except KeyError:
+                    pass
 
     async def submit(self, pipeline: PipelineSpec) -> RunRecord:
         """Create a queued run and start its background scheduler when a slot opens.
@@ -608,6 +642,9 @@ class Orchestrator:
         await self.store.persist_run(run_id)
 
         node_map = pipeline.node_map
+
+        # Pre-register shared resource counts so instances survive between sequential nodes
+        self._register_shared_resources(pipeline)
         remaining = set(node_map)
         in_progress: dict[str, asyncio.Task[_NodeExecutionOutcome]] = {}
         semaphore = asyncio.Semaphore(pipeline.concurrency)
