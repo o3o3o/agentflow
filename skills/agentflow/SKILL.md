@@ -179,6 +179,20 @@ impl = codex(task_id="impl", ..., target={"kind": "ec2", "shared": "dev"})
 # Both run on same EC2, files persist between them
 ```
 
+## Worktrees
+
+Isolate each agent in its own git worktree so they can edit files without conflicts:
+
+```python
+with Graph("review", use_worktree=True) as g:
+    reviewers = fanout(
+        codex(task_id="reviewer", prompt="Review {{ item.file }}", tools="read_write"),
+        [{"file": "api.py"}, {"file": "auth.py"}, {"file": "db.py"}],
+    )
+```
+
+Each agent gets a full repo copy at `.agentflow/worktrees/<run_id>/<node_id>/`. Cleaned up after execution.
+
 ## Scratchboard
 
 Enable shared memory across all agents:
@@ -198,6 +212,7 @@ Graph("name",
     fail_fast=False,         # skip downstream on failure
     max_iterations=10,       # cycle iteration limit
     scratchboard=False,      # shared memory file
+    use_worktree=False,      # git worktree per agent
     node_defaults={...},     # defaults for all nodes
     agent_defaults={...},    # per-agent defaults
 )
