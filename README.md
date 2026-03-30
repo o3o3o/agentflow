@@ -7,6 +7,16 @@ Orchestrate codex, claude, and kimi agents in dependency graphs with parallel fa
 
 ## Install
 
+One line:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/shouc/agentflow/master/install.sh | bash
+```
+
+This installs agentflow, adds it to PATH, and installs the skill for Codex and Claude Code.
+
+Or manually:
+
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
 pip install -e .[dev]
