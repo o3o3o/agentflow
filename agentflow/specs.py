@@ -420,6 +420,7 @@ class SSHTarget(BaseModel):
     username: str | None = None
     identity_file: str | None = None
     remote_workdir: str | None = None
+    forward_credentials: bool = False
 
 
 class EC2Target(BaseModel):

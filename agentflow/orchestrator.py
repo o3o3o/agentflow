@@ -549,11 +549,16 @@ class Orchestrator:
             result.attempts.append(attempt)
             parser.start_attempt(attempt_number)
             prepared = adapter.prepare(node, prompt, paths)
-            # Forward local credentials to remote targets (SSH, EC2, ECS)
-            if node.target.kind in ("ssh", "ec2", "ecs"):
+            # Forward local credentials to remote targets when enabled
+            # EC2/ECS: always forward (ephemeral, no pre-existing config)
+            # SSH: only if forward_credentials=True (remote has its own identity)
+            should_forward = (
+                node.target.kind in ("ec2", "ecs")
+                or (node.target.kind == "ssh" and getattr(node.target, "forward_credentials", False))
+            )
+            if should_forward:
                 from agentflow.cloud.aws import collect_local_credentials
                 local_creds = collect_local_credentials(node.agent.value)
-                # Merge: explicit node env wins over local creds
                 merged = {**local_creds, **prepared.env}
                 prepared = PreparedExecution(
                     command=prepared.command, env=merged, cwd=prepared.cwd,
