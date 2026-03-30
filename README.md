@@ -2,8 +2,8 @@
 
 Orchestrate codex, claude, and kimi agents in dependency graphs with parallel fanout, iterative cycles, and remote execution on SSH/EC2/ECS.
 
-![AgentFlow Web UI](docs/screenshot.png)
-*64 codex agents saying hello in parallel, with a merge counter -- live in the AgentFlow web UI.*
+![AgentFlow Graph](docs/graph.png)
+*94-node pipeline: plan → 64 workers → 8 batch merges → 16 reviews → 4 review merges → synthesis*
 
 ## Install
 
